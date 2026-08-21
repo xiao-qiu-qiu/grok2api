@@ -1,14 +1,20 @@
 name: grok2api
 
+# Lab 默认对齐 18183：qualityGuard + requestRetry 已开，sidecar 随 `up -d` 启动。
+# 镜像：ghcr.io/lij768423-svg/grok2api:v3.1.4-lab
+# 首次：cp config.example.yaml config.yaml ，改 secrets 和 bootstrapAdmin。
+
 services:
   grok2api:
     container_name: grok2api
-    image: "${GROK2API_IMAGE:-ghcr.io/chenyme/grok2api:latest}"
+    image: "${GROK2API_IMAGE:-ghcr.io/lij768423-svg/grok2api:v3.1.4-lab}"
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "${GROK2API_PORT:-8000}:8000"
     environment:
       TZ: "${TZ:-Asia/Shanghai}"
-      # 非空时覆盖 config.yaml 的 PostgreSQL DSN，并自动启用 postgres。
       GROK2API_DATABASE_URL: "${GROK2API_DATABASE_URL:-}"
       GROK2API_QUALITY_GUARD_DIR: /var/lib/grok2api-quality-guard
     volumes:
@@ -20,6 +26,12 @@ services:
     stop_grace_period: 30s
     security_opt:
       - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
 
   # ================================ WARP ================================
   # 如果出口 IP 不干净，可取消以下注释使用 WARP 作为落地代理。
@@ -40,7 +52,6 @@ services:
   # ================================ FLARESOLVERR ================================
   # 在管理端将 Clearance 模式设为 FlareSolverr 或按需刷新，并使用 http://flaresolverr:8191。
   # 启动命令：docker compose --profile flaresolverr up -d
-  # Podman：podman compose --profile flaresolverr up -d
 
   # flaresolverr:
   #   container_name: flaresolverr
@@ -51,27 +62,25 @@ services:
   #     LOG_LEVEL: info
   #   restart: unless-stopped
 
-  # ================================ EGRESS QUALITY GUARD ================================
-  # 可选的 Grok Build 出口质量守护 sidecar。默认不启动，也不会产生探测请求。
-  # 启用前在 config.yaml 中配置 qualityGuard，然后执行：
-  # docker compose --profile quality-guard up -d --build
-
+  # 出口质量守护：默认随主服务启动（passive，不额外烧 token）。
   egress-quality-guard:
     container_name: grok2api-egress-quality-guard
-    profiles: ["quality-guard"]
+    image: "${GROK2API_QG_IMAGE:-ghcr.io/lij768423-svg/grok2api-quality-guard:v3.1.4-lab}"
     build:
       context: .
       dockerfile: tools/egress-quality-guard/Dockerfile
     environment:
-      # Default matches the Compose service name. Override for host networking
-      # or a renamed grok2api service, e.g. http://127.0.0.1:8000
       GROK2API_BASE_URL: ${GROK2API_BASE_URL:-http://grok2api:8000}
+      QUALITY_GUARD_MODE: ${QUALITY_GUARD_MODE:-passive}
+      QUALITY_GUARD_MODEL: ${QUALITY_GUARD_MODEL:-grok-4.6}
+      QUALITY_GUARD_FAIL_CLOSED: "${QUALITY_GUARD_FAIL_CLOSED:-false}"
+      QUALITY_GUARD_MIN_HEALTHY_NODES: "${QUALITY_GUARD_MIN_HEALTHY_NODES:-1}"
     depends_on:
       grok2api:
         condition: service_healthy
     volumes:
       - quality_guard_state:/var/lib/grok2api-quality-guard
-    restart: "on-failure:5"
+    restart: unless-stopped
     init: true
     stop_grace_period: 30s
     security_opt:

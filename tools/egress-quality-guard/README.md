@@ -187,19 +187,16 @@ traffic. Choose a longer active interval when upstream quota is limited.
 
 ## Docker Compose quick start
 
-The repository's main `docker-compose.yml` includes the sidecar behind the
-optional `quality-guard` profile. A normal `docker compose up -d` does not start
-it or generate probe traffic.
+This fork's `docker-compose.yml` starts the sidecar by default (passive mode, no extra model tokens).
 
 Run from the repository root:
 
 ```sh
-docker compose --profile quality-guard config --quiet
-docker compose --profile quality-guard up -d --build
+docker compose up -d
 ```
 
 After changing the base `qualityGuard` settings in `config.yaml`, run
-`docker compose --profile quality-guard restart grok2api egress-quality-guard`
+`docker compose restart grok2api egress-quality-guard`
 so the main service regenerates the bootstrap. Policy changes saved in the
 admin page still hot-reload without a restart.
 
@@ -216,7 +213,7 @@ Verify the managed nodes, model, and minimum healthy-node count before leaving
 the sidecar running. Never commit the state volume or
 production logs.
 Stop only the guard with
-`docker compose --profile quality-guard stop egress-quality-guard`; the main
+`docker compose stop egress-quality-guard`; the main
 API remains available.
 
 ## Known limitations
