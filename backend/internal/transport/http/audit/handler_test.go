@@ -119,9 +119,10 @@ func TestQualityGuardAuditListMarksOwnProbeWithoutExposingKeyIdentity(t *testing
 	}
 	repository := relational.NewAuditRepository(database)
 	now := time.Now().UTC()
+	accountID := uint64(42)
 	if err := repository.CreateBatch(ctx, []auditdomain.Record{
 		{RequestID: "guard-probe", ClientKeyID: 7, ClientKeyName: "secret-guard-name", ModelRouteID: 1, Provider: "grok_build", StatusCode: 200, CreatedAt: now},
-		{RequestID: "user-request", ClientKeyID: 8, ClientKeyName: "secret-user-name", ModelRouteID: 1, Provider: "grok_build", StatusCode: 200, CreatedAt: now.Add(-time.Second)},
+		{RequestID: "user-request", ClientKeyID: 8, ClientKeyName: "secret-user-name", ModelRouteID: 1, Provider: "grok_build", AccountID: &accountID, AccountName: "account-visible", StatusCode: 200, CreatedAt: now.Add(-time.Second)},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -136,6 +137,9 @@ func TestQualityGuardAuditListMarksOwnProbeWithoutExposingKeyIdentity(t *testing
 	body := recorder.Body.String()
 	if !strings.Contains(body, `"requestId":"guard-probe","qualityProbe":true`) || !strings.Contains(body, `"requestId":"user-request","qualityProbe":false`) {
 		t.Fatalf("probe markers missing: %s", body)
+	}
+	if !strings.Contains(body, `"accountId":"42"`) || !strings.Contains(body, `"accountName":"account-visible"`) {
+		t.Fatalf("quality guard account identity missing: %s", body)
 	}
 	if strings.Contains(body, "clientKeyId") || strings.Contains(body, "clientKeyName") || strings.Contains(body, "secret-") {
 		t.Fatalf("client key identity leaked: %s", body)
