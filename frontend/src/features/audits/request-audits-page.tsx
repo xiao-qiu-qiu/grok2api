@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ArrowDown, ArrowUp, BrainCircuit, CircleCheck, CircleDollarSign, CornerDownRight, Database, Globe2, Info, Minimize2, RefreshCw, Search, WholeWord, type LucideIcon } from "lucide-react";
+import { Activity, ArrowDown, ArrowUp, BrainCircuit, CircleCheck, CircleDollarSign, CornerDownRight, Database, Globe2, Info, Minimize2, RefreshCw, Search, UserRound, WholeWord, type LucideIcon } from "lucide-react";
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -550,6 +550,10 @@ function ModelRouteValue({ model, upstreamModel, account, clientKey, clientIp, r
           <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
             <CornerDownRight className="size-3 shrink-0" />
             <span className="truncate" title={upstreamModel}>{upstreamModel}</span>
+          </span>
+          <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+            <UserRound className="size-3 shrink-0" />
+            <span className="truncate" title={account}>{account}</span>
           </span>
           {clientIp ? (
             <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[10px] text-muted-foreground/80">
