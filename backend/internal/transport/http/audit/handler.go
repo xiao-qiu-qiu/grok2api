@@ -45,6 +45,8 @@ type qualityGuardAuditResponse struct {
 	Provider        string  `json:"provider"`
 	EgressNodeID    *uint64 `json:"egressNodeId,string,omitempty"`
 	EgressNodeName  string  `json:"egressNodeName,omitempty"`
+	AccountID       *uint64 `json:"accountId,string,omitempty"`
+	AccountName     string  `json:"accountName,omitempty"`
 	StatusCode      int     `json:"statusCode"`
 	Streaming       bool    `json:"streaming"`
 	OutputTokens    int64   `json:"outputTokens"`
@@ -75,6 +77,7 @@ func (h *Handler) listQualityGuard(c *gin.Context) {
 		items = append(items, qualityGuardAuditResponse{
 			ID: value.ID, RequestID: value.RequestID, QualityProbe: value.ClientKeyID == h.qualityGuardClientKeyID,
 			Provider: value.Provider, EgressNodeID: value.EgressNodeID, EgressNodeName: value.EgressNodeName,
+			AccountID: value.AccountID, AccountName: value.AccountName,
 			StatusCode: value.StatusCode, Streaming: value.Streaming, OutputTokens: value.OutputTokens,
 			ReasoningTokens: value.ReasoningTokens, FirstTokenMS: value.FirstTokenMS,
 			DurationMS: value.DurationMS, ErrorCode: value.ErrorCode,

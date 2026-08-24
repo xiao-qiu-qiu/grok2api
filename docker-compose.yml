@@ -32,6 +32,9 @@ services:
       timeout: 5s
       retries: 8
       start_period: 20s
+    networks:
+      - default
+      - ai-gateway
 
   # ================================ WARP ================================
   # 如果出口 IP 不干净，可取消以下注释使用 WARP 作为落地代理。
@@ -89,3 +92,8 @@ services:
 volumes:
   grok2api-data:
   quality_guard_state:
+
+networks:
+  ai-gateway:
+    external: true
+    name: ai-gateway
