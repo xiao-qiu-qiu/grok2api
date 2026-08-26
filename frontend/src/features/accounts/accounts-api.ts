@@ -324,7 +324,11 @@ export function setWebAccountBirthDate(id: string): Promise<{ completed: boolean
 }
 
 export function enableWebAccountNSFW(id: string): Promise<{ completed: boolean }> {
-  return apiRequest(`/api/admin/v1/accounts/web/${id}/nsfw`, { method: "POST" }, decodeBooleanResult<{ completed: boolean }>("completed"));
+	return apiRequest(`/api/admin/v1/accounts/web/${id}/nsfw`, { method: "POST" }, decodeBooleanResult<{ completed: boolean }>("completed"));
+}
+
+export function excludeWebAccountFromTraining(id: string): Promise<{ completed: boolean }> {
+	return apiRequest(`/api/admin/v1/accounts/web/${id}/exclude-from-training`, { method: "POST" }, decodeBooleanResult<{ completed: boolean }>("completed"));
 }
 
 export type AccountBatchResultDTO = { succeeded: number; failed: number };
@@ -367,9 +371,10 @@ export type WebConsoleSyncInput =
   | { all?: false; ids: string[]; strategy: WebConsoleSyncStrategy };
 
 export type WebAccountScriptActions = {
-  acceptTerms: boolean;
-  setBirthDate: boolean;
-  enableNSFW: boolean;
+	acceptTerms: boolean;
+	setBirthDate: boolean;
+	enableNSFW: boolean;
+	excludeFromTraining: boolean;
 };
 
 export type WebAccountScriptsInput =

@@ -1,4 +1,4 @@
-import { Cake, Handshake, VenusAndMars, type LucideIcon } from "lucide-react";
+import { BrainCircuit, Cake, Handshake, VenusAndMars, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -20,12 +20,13 @@ const defaultActions: WebAccountScriptActions = {
   acceptTerms: true,
   setBirthDate: true,
   enableNSFW: true,
+  excludeFromTraining: false,
 };
 
 export function WebAccountScriptsDialog({ targets, pending, progress, onClose, onRun }: Props) {
   const { t } = useTranslation();
   const [actions, setActions] = useState<WebAccountScriptActions>(defaultActions);
-  const hasAction = actions.acceptTerms || actions.setBirthDate || actions.enableNSFW;
+  const hasAction = actions.acceptTerms || actions.setBirthDate || actions.enableNSFW || actions.excludeFromTraining;
 
   function updateAction(action: keyof WebAccountScriptActions, checked: boolean): void {
     setActions((current) => {
@@ -64,6 +65,12 @@ export function WebAccountScriptsDialog({ targets, pending, progress, onClose, o
       icon: VenusAndMars,
       label: t("webAccountSettings.enableNSFW"),
       description: t("webAccountScripts.enableNSFWDescription"),
+    },
+    {
+      action: "excludeFromTraining",
+      icon: BrainCircuit,
+      label: t("webAccountSettings.excludeFromTraining"),
+      description: t("webAccountScripts.excludeFromTrainingDescription"),
     },
   ];
 

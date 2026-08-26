@@ -149,6 +149,7 @@ func (h *Handler) Register(router *gin.RouterGroup) {
 	router.POST("/accounts/web/:id/accept-terms", h.acceptWebTerms)
 	router.POST("/accounts/web/:id/birth-date", h.setWebBirthDate)
 	router.POST("/accounts/web/:id/nsfw", h.enableWebNSFW)
+	router.POST("/accounts/web/:id/exclude-from-training", h.excludeWebAccountFromTraining)
 	router.POST("/accounts/console/refresh-quotas", h.refreshAllConsoleQuotas)
 	router.POST("/accounts/refresh-billing", h.refreshAllBilling)
 	router.POST("/accounts/reset-quota", h.resetAllBuildQuota)
@@ -1434,6 +1435,18 @@ func (h *Handler) enableWebNSFW(c *gin.Context) {
 	}
 	if err := h.service.EnableWebNSFW(c.Request.Context(), id); err != nil {
 		h.writeServiceError(c, "webNSFWEnableFailed", err, http.StatusBadGateway, "开启 Grok Web NSFW 失败")
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{"completed": true})
+}
+
+func (h *Handler) excludeWebAccountFromTraining(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	if err := h.service.ExcludeWebAccountFromTraining(c.Request.Context(), id); err != nil {
+		h.writeServiceError(c, "webTrainingExclusionFailed", err, http.StatusBadGateway, "关闭 Grok Web 训练数据使用失败")
 		return
 	}
 	response.Success(c, http.StatusOK, gin.H{"completed": true})

@@ -262,6 +262,10 @@ func (*blockingWebAccountSettingsAdapter) EnableNSFW(context.Context, accountdom
 	return nil
 }
 
+func (*blockingWebAccountSettingsAdapter) ExcludeFromTraining(context.Context, accountdomain.Credential) error {
+	return nil
+}
+
 func createWebAccountForScriptTest(t *testing.T, ctx context.Context, repo interface {
 	UpsertByIdentity(context.Context, accountdomain.Credential) (accountdomain.Credential, bool, error)
 }, sourceKey string) accountdomain.Credential {

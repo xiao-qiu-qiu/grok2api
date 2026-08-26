@@ -43,6 +43,7 @@ import {
   previewAccountDeletion,
   previewCleanup,
   enableWebAccountNSFW,
+  excludeWebAccountFromTraining,
   convertWebAccountsToBuild,
   detectBuildAccounts,
   exportAccountBatch,
@@ -531,11 +532,14 @@ export function AccountsPage() {
     mutationFn: ({ account, action }: WebAccountConfirmationTarget) => {
       if (action === "acceptTerms") return acceptWebAccountTerms(account.id);
       if (action === "setBirthDate") return setWebAccountBirthDate(account.id);
-      return enableWebAccountNSFW(account.id);
+      if (action === "enableNSFW") return enableWebAccountNSFW(account.id);
+      return excludeWebAccountFromTraining(account.id);
     },
     onSuccess: (_, target) => {
       setWebConfirmationTarget(null);
-      const messageKey = target.action === "acceptTerms"
+      const messageKey = target.action === "excludeFromTraining"
+        ? "webAccountSettings.excludeFromTrainingDone"
+        : target.action === "acceptTerms"
         ? "webAccountSettings.termsAccepted"
         : target.action === "setBirthDate"
           ? "webAccountSettings.birthDateSaved"

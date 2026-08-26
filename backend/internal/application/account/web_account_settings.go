@@ -71,6 +71,11 @@ func (s *Service) EnableWebNSFW(ctx context.Context, id uint64) error {
 	return s.runSingleWebAccountScript(ctx, id, WebAccountScriptOptions{EnableNSFW: true})
 }
 
+// ExcludeWebAccountFromTraining disables the Grok Web "Improve the Model" preference.
+func (s *Service) ExcludeWebAccountFromTraining(ctx context.Context, id uint64) error {
+	return s.runSingleWebAccountScript(ctx, id, WebAccountScriptOptions{ExcludeFromTraining: true})
+}
+
 func (s *Service) runWebAccountScript(ctx context.Context, id uint64, options WebAccountScriptOptions) error {
 	options, err := normalizeWebAccountScriptOptions(options)
 	if err != nil {
@@ -86,7 +91,7 @@ func (s *Service) runWebAccountScript(ctx context.Context, id uint64, options We
 		return err
 	}
 	options = pendingWebAccountScriptOptions(credential, options)
-	if !options.AcceptTerms && !options.SetBirthDate && !options.EnableNSFW {
+	if !options.AcceptTerms && !options.SetBirthDate && !options.EnableNSFW && !options.ExcludeFromTraining {
 		return nil
 	}
 	if options.AcceptTerms {
@@ -111,6 +116,13 @@ func (s *Service) runWebAccountScript(ctx context.Context, id uint64, options We
 			return err
 		}
 		if err := s.recordWebAccountState(ctx, credential.ID, "NSFW", s.accounts.MarkWebNSFWEnabled); err != nil {
+			return err
+		}
+	}
+	if options.ExcludeFromTraining {
+		if err := s.runWebAccountSetting(ctx, credential, "关闭训练数据使用", func() error {
+			return adapter.ExcludeFromTraining(ctx, credential)
+		}); err != nil {
 			return err
 		}
 	}
