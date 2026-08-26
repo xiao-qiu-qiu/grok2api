@@ -28,7 +28,7 @@ func TestWebAccountSettingsMatchCapturedProtocol(t *testing.T) {
 	if err != nil || !bytes.Equal(enableNSFWBody, expectedNSFW) {
 		t.Fatalf("NSFW frame = %x", enableNSFWBody)
 	}
-	var accountTermsSeen, productTermsSeen, birthSeen, nsfwSeen atomic.Bool
+	var accountTermsSeen, productTermsSeen, birthSeen, nsfwSeen, trainingSeen atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		body, _ := io.ReadAll(request.Body)
 		switch request.URL.Path {
@@ -69,6 +69,15 @@ func TestWebAccountSettingsMatchCapturedProtocol(t *testing.T) {
 			if !bytes.Equal(body, enableNSFWBody) || request.Header.Get("x-statsig-id") == "" || request.Header.Get("x-user-agent") != "" {
 				t.Errorf("nsfw body=%x headers=%#v", body, request.Header)
 			}
+		case "/rest/user-settings":
+			trainingSeen.Store(true)
+			var payload map[string]bool
+			if json.Unmarshal(body, &payload) != nil || !payload["excludeFromTraining"] {
+				t.Errorf("training payload = %s", body)
+			}
+			if request.Header.Get("Content-Type") != "application/json" || request.Header.Get("x-statsig-id") == "" {
+				t.Errorf("training headers = %#v", request.Header)
+			}
 		default:
 			http.NotFound(writer, request)
 			return
@@ -100,8 +109,38 @@ func TestWebAccountSettingsMatchCapturedProtocol(t *testing.T) {
 	if err := adapter.EnableNSFW(context.Background(), credential); err != nil {
 		t.Fatal(err)
 	}
-	if !accountTermsSeen.Load() || !productTermsSeen.Load() || !birthSeen.Load() || !nsfwSeen.Load() {
-		t.Fatalf("seen accountTerms=%v productTerms=%v birth=%v nsfw=%v", accountTermsSeen.Load(), productTermsSeen.Load(), birthSeen.Load(), nsfwSeen.Load())
+	if err := adapter.ExcludeFromTraining(context.Background(), credential); err != nil {
+		t.Fatal(err)
+	}
+	if !accountTermsSeen.Load() || !productTermsSeen.Load() || !birthSeen.Load() || !nsfwSeen.Load() || !trainingSeen.Load() {
+		t.Fatalf("seen accountTerms=%v productTerms=%v birth=%v nsfw=%v training=%v", accountTermsSeen.Load(), productTermsSeen.Load(), birthSeen.Load(), nsfwSeen.Load(), trainingSeen.Load())
+	}
+}
+
+func TestExcludeFromTrainingRejectsExplicitlyDisabledResponse(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/rest/user-settings" {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(`{"excludeFromTraining":false}`))
+	}))
+	t.Cleanup(server.Close)
+	cipher, err := security.NewCipher(base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedToken, _ := cipher.Encrypt("test-sso")
+	statsig := base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte{'s'}, 70))
+	adapter := NewAdapter(Config{BaseURL: server.URL, StatsigMode: "manual", StatsigManualValue: statsig}, infraegress.NewManager(egressRepositoryStub{}, cipher), cipher, nil, nil)
+	err = adapter.ExcludeFromTraining(context.Background(), account.Credential{
+		ID: 5, Provider: account.ProviderWeb, AuthType: account.AuthTypeSSO, EncryptedAccessToken: encryptedToken,
+	})
+	if err == nil || !strings.Contains(err.Error(), "未生效") {
+		t.Fatalf("err = %v, want explicit response validation failure", err)
 	}
 }
 

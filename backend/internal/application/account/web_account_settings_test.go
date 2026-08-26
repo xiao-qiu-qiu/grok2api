@@ -43,9 +43,12 @@ func TestWebAccountSettingsAreWebOnlyAndGenerateBirthDate(t *testing.T) {
 	if err := service.EnableWebNSFW(ctx, webAccount.ID); err != nil {
 		t.Fatal(err)
 	}
+	if err := service.ExcludeWebAccountFromTraining(ctx, webAccount.ID); err != nil {
+		t.Fatal(err)
+	}
 	earliest, latest := webBirthDateRange(service.now().In(time.Local))
-	if adapter.terms != 1 || adapter.birthDate.Before(earliest) || adapter.birthDate.After(latest) || adapter.nsfw != 1 {
-		t.Fatalf("adapter terms=%d birth=%v nsfw=%d", adapter.terms, adapter.birthDate, adapter.nsfw)
+	if adapter.terms != 1 || adapter.birthDate.Before(earliest) || adapter.birthDate.After(latest) || adapter.nsfw != 1 || adapter.exclude != 1 {
+		t.Fatalf("adapter terms=%d birth=%v nsfw=%d exclude=%d", adapter.terms, adapter.birthDate, adapter.nsfw, adapter.exclude)
 	}
 	updatedWeb, err := repo.Get(ctx, webAccount.ID)
 	if err != nil {
@@ -186,6 +189,7 @@ type webAccountSettingsAdapterStub struct {
 	birthDate     time.Time
 	birthCalls    int
 	nsfw          int
+	exclude       int
 	err           error
 	calls         map[uint64][]string
 	failures      map[uint64]map[string]error
@@ -226,6 +230,13 @@ func (a *webAccountSettingsAdapterStub) EnableNSFW(_ context.Context, credential
 	defer a.mu.Unlock()
 	a.nsfw++
 	return a.recordLocked(credential.ID, "enableNSFW")
+}
+
+func (a *webAccountSettingsAdapterStub) ExcludeFromTraining(_ context.Context, credential accountdomain.Credential) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.exclude++
+	return a.recordLocked(credential.ID, "excludeFromTraining")
 }
 
 func (a *webAccountSettingsAdapterStub) recordLocked(accountID uint64, action string) error {

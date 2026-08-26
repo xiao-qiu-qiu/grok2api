@@ -1,4 +1,4 @@
-import { Cake, FileCheck2, Settings2, ShieldCheck } from "lucide-react";
+import { BrainCircuit, Cake, FileCheck2, Settings2, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -6,7 +6,7 @@ import { DropdownMenuItem, DropdownMenuSub, DropdownMenuSubContent, DropdownMenu
 import { Spinner } from "@/components/ui/spinner";
 import type { AccountDTO } from "@/features/accounts/accounts-api";
 
-export type WebAccountConfirmationAction = "acceptTerms" | "setBirthDate" | "enableNSFW";
+export type WebAccountConfirmationAction = "acceptTerms" | "setBirthDate" | "enableNSFW" | "excludeFromTraining";
 
 export type WebAccountConfirmationTarget = {
   account: AccountDTO;
@@ -40,6 +40,10 @@ export function WebAccountSettingsMenu({ account, disabled, onConfirm }: MenuPro
           <ShieldCheck />
           {t("webAccountSettings.enableNSFW")}
         </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onConfirm({ account, action: "excludeFromTraining" })}>
+          <BrainCircuit />
+          {t("webAccountSettings.excludeFromTraining")}
+        </DropdownMenuItem>
       </DropdownMenuSubContent>
     </DropdownMenuSub>
   );
@@ -60,17 +64,23 @@ export function WebAccountSettingsDialogs({
 }: DialogsProps) {
   const { t } = useTranslation();
   const action = confirmationTarget?.action ?? "acceptTerms";
-  const titleKey = action === "enableNSFW"
+  const titleKey = action === "excludeFromTraining"
+    ? "webAccountSettings.excludeFromTrainingTitle"
+    : action === "enableNSFW"
     ? "webAccountSettings.enableNSFWTitle"
     : action === "setBirthDate"
       ? "webAccountSettings.setBirthDateTitle"
       : "webAccountSettings.acceptTermsTitle";
-  const descriptionKey = action === "enableNSFW"
+  const descriptionKey = action === "excludeFromTraining"
+    ? "webAccountSettings.excludeFromTrainingDescription"
+    : action === "enableNSFW"
     ? "webAccountSettings.enableNSFWDescription"
     : action === "setBirthDate"
       ? "webAccountSettings.setBirthDateDescription"
       : "webAccountSettings.acceptTermsDescription";
-  const actionKey = action === "enableNSFW"
+  const actionKey = action === "excludeFromTraining"
+    ? "webAccountSettings.excludeFromTraining"
+    : action === "enableNSFW"
     ? "webAccountSettings.enableNSFW"
     : action === "setBirthDate"
       ? "webAccountSettings.setBirthDate"

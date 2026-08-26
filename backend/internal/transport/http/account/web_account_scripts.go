@@ -18,21 +18,23 @@ type webAccountScriptsRequest struct {
 }
 
 type webAccountScriptActionsRequest struct {
-	AcceptTerms  bool `json:"acceptTerms"`
-	SetBirthDate bool `json:"setBirthDate"`
-	EnableNSFW   bool `json:"enableNSFW"`
+	AcceptTerms         bool `json:"acceptTerms"`
+	SetBirthDate        bool `json:"setBirthDate"`
+	EnableNSFW          bool `json:"enableNSFW"`
+	ExcludeFromTraining bool `json:"excludeFromTraining"`
 }
 
 func (r webAccountScriptActionsRequest) options() accountapp.WebAccountScriptOptions {
 	return accountapp.WebAccountScriptOptions{
-		AcceptTerms:  r.AcceptTerms,
-		SetBirthDate: r.SetBirthDate,
-		EnableNSFW:   r.EnableNSFW,
+		AcceptTerms:         r.AcceptTerms,
+		SetBirthDate:        r.SetBirthDate,
+		EnableNSFW:          r.EnableNSFW,
+		ExcludeFromTraining: r.ExcludeFromTraining,
 	}
 }
 
 func (r webAccountScriptActionsRequest) empty() bool {
-	return !r.AcceptTerms && !r.SetBirthDate && !r.EnableNSFW
+	return !r.AcceptTerms && !r.SetBirthDate && !r.EnableNSFW && !r.ExcludeFromTraining
 }
 
 func (h *Handler) runWebAccountScripts(c *gin.Context) {

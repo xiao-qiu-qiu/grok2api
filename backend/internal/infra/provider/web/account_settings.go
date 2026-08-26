@@ -116,17 +116,41 @@ func (a *Adapter) EnableNSFW(ctx context.Context, credential account.Credential)
 	})
 }
 
+// ExcludeFromTraining disables the Grok Web "Improve the Model" preference.
+// The upstream field is intentionally named as an exclusion: true means that
+// this account's content is excluded from model improvement/training.
+func (a *Adapter) ExcludeFromTraining(ctx context.Context, credential account.Credential) error {
+	cfg := a.config()
+	baseURL := strings.TrimRight(cfg.BaseURL, "/")
+	body, err := json.Marshal(struct {
+		ExcludeFromTraining bool `json:"excludeFromTraining"`
+	}{ExcludeFromTraining: true})
+	if err != nil {
+		return err
+	}
+	return a.runWebAccountSetting(ctx, credential, webAccountSettingRequest{
+		endpoint:     baseURL + "/rest/user-settings",
+		body:         body,
+		contentType:  "application/json",
+		origin:       baseURL,
+		referer:      baseURL + "/",
+		statsig:      true,
+		validateBody: validateExcludeFromTrainingResponse,
+	})
+}
+
 type webAccountSettingRequest struct {
-	endpoint    string
-	body        []byte
-	contentType string
-	origin      string
-	referer     string
-	grpcWeb     bool
-	connectES   bool
-	statsig     bool
-	clientHints bool
-	withoutCF   bool
+	endpoint     string
+	body         []byte
+	contentType  string
+	origin       string
+	referer      string
+	grpcWeb      bool
+	connectES    bool
+	statsig      bool
+	clientHints  bool
+	withoutCF    bool
+	validateBody func([]byte) error
 }
 
 func (a *Adapter) runWebAccountSetting(ctx context.Context, credential account.Credential, input webAccountSettingRequest) error {
@@ -213,9 +237,30 @@ func (a *Adapter) executeWebAccountSetting(ctx context.Context, token string, le
 				return err
 			}
 		}
+		if input.validateBody != nil {
+			if err := input.validateBody(body); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 	return fmt.Errorf("Grok Web Statsig 刷新后仍被拒绝")
+}
+
+func validateExcludeFromTrainingResponse(body []byte) error {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil
+	}
+	var payload struct {
+		ExcludeFromTraining *bool `json:"excludeFromTraining"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return fmt.Errorf("解析 Grok Web 训练数据设置响应: %w", err)
+	}
+	if payload.ExcludeFromTraining != nil && !*payload.ExcludeFromTraining {
+		return fmt.Errorf("Grok Web 训练数据设置未生效")
+	}
+	return nil
 }
 
 func validateAccountSettingGRPCStatus(response *http.Response, body []byte) error {
