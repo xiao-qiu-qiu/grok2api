@@ -778,6 +778,7 @@ type WebAccountSettingsAdapter interface {
 	AcceptTerms(ctx context.Context, credential account.Credential) error
 	SetBirthDate(ctx context.Context, credential account.Credential, birthDate time.Time) error
 	EnableNSFW(ctx context.Context, credential account.Credential) error
+	ExcludeFromTraining(ctx context.Context, credential account.Credential) error
 }
 
 // ImageGenerationAdapter defines an optional Provider image-generation capability.

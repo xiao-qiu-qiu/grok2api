@@ -19,9 +19,10 @@ var ErrWebAccountScriptBusy = errors.New("Grok Web 账号脚本正在执行")
 // WebAccountScriptOptions 定义 Grok Web 账号脚本需要执行的步骤。
 // EnableNSFW 会隐式启用 SetBirthDate，保证上游年龄前置条件成立。
 type WebAccountScriptOptions struct {
-	AcceptTerms  bool
-	SetBirthDate bool
-	EnableNSFW   bool
+	AcceptTerms         bool
+	SetBirthDate        bool
+	EnableNSFW          bool
+	ExcludeFromTraining bool
 }
 
 // RunWebAccountScriptsWithProgress 为指定 Web 账号并发执行所选脚本，并按账号报告进度。
@@ -94,7 +95,7 @@ func (s *Service) RunAllWebAccountScriptsWithProgress(ctx context.Context, optio
 }
 
 func normalizeWebAccountScriptOptions(options WebAccountScriptOptions) (WebAccountScriptOptions, error) {
-	if !options.AcceptTerms && !options.SetBirthDate && !options.EnableNSFW {
+	if !options.AcceptTerms && !options.SetBirthDate && !options.EnableNSFW && !options.ExcludeFromTraining {
 		return WebAccountScriptOptions{}, invalidInput("至少选择一个账号脚本")
 	}
 	if options.EnableNSFW {
