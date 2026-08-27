@@ -39,6 +39,9 @@ func TestReconcileProviderLinksUsesOnlyHighConfidenceIdentity(t *testing.T) {
 	if err := repo.MarkWebTermsAccepted(ctx, web.ID, account.CurrentWebTermsVersion, nsfwEnabledAt); err != nil {
 		t.Fatal(err)
 	}
+	if err := repo.MarkWebTrainingDataExcluded(ctx, web.ID, nsfwEnabledAt); err != nil {
+		t.Fatal(err)
+	}
 	console := createLinkedAccountTestCredential(t, ctx, repo, account.Credential{
 		Provider: account.ProviderConsole, AuthType: account.AuthTypeSSO, Name: "console", SourceKey: "console-sso:" + digest,
 	})
@@ -76,6 +79,9 @@ func TestReconcileProviderLinksUsesOnlyHighConfidenceIdentity(t *testing.T) {
 	}
 	if web.WebTermsAcceptedVersion != account.CurrentWebTermsVersion || build.WebTermsAcceptedVersion != account.CurrentWebTermsVersion || console.WebTermsAcceptedVersion != account.CurrentWebTermsVersion {
 		t.Fatalf("shared terms versions web=%d build=%d console=%d", web.WebTermsAcceptedVersion, build.WebTermsAcceptedVersion, console.WebTermsAcceptedVersion)
+	}
+	if web.WebTrainingDataExcludedAt == nil || build.WebTrainingDataExcludedAt == nil || console.WebTrainingDataExcludedAt == nil || !web.WebTrainingDataExcludedAt.Equal(nsfwEnabledAt) || !build.WebTrainingDataExcludedAt.Equal(nsfwEnabledAt) || !console.WebTrainingDataExcludedAt.Equal(nsfwEnabledAt) {
+		t.Fatalf("shared training markers web=%v build=%v console=%v", web.WebTrainingDataExcludedAt, build.WebTrainingDataExcludedAt, console.WebTrainingDataExcludedAt)
 	}
 	if build.LinkedAccountID != web.ID || build.LinkedProvider != account.ProviderWeb || len(console.LinkedAccounts) != 1 || console.LinkedAccounts[0].ID != web.ID {
 		t.Fatalf("reverse links build=%#v console=%#v", build.LinkedAccounts, console.LinkedAccounts)

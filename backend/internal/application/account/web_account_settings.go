@@ -125,6 +125,9 @@ func (s *Service) runWebAccountScript(ctx context.Context, id uint64, options We
 		}); err != nil {
 			return err
 		}
+		if err := s.recordWebAccountState(ctx, credential.ID, "关闭训练数据使用", s.accounts.MarkWebTrainingDataExcluded); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -139,6 +142,9 @@ func pendingWebAccountScriptOptions(credential accountdomain.Credential, options
 	}
 	if credential.WebNSFWEnabledAt != nil {
 		options.EnableNSFW = false
+	}
+	if credential.WebTrainingDataExcludedAt != nil {
+		options.ExcludeFromTraining = false
 	}
 	if options.EnableNSFW && !birthDateRecorded {
 		options.SetBirthDate = true

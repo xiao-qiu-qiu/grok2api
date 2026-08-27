@@ -235,7 +235,7 @@ func TestExportProviderCredentialsRoundTripsSSOProviders(t *testing.T) {
 				EncryptedAccessToken: token, EncryptedCloudflareCookie: cookies,
 				Enabled: true, AuthStatus: accountdomain.AuthStatusActive,
 				WebNSFWEnabledAt: &nsfwAt, WebTermsAcceptedAt: &tosAt,
-				WebTermsAcceptedVersion: accountdomain.CurrentWebTermsVersion, WebBirthDateSetAt: &birthDateAt,
+				WebTermsAcceptedVersion: accountdomain.CurrentWebTermsVersion, WebBirthDateSetAt: &birthDateAt, WebTrainingDataExcludedAt: &birthDateAt,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -264,7 +264,7 @@ func TestExportProviderCredentialsRoundTripsSSOProviders(t *testing.T) {
 			if result.Count != 1 || len(values) != 1 || values[0].Provider != test.providerValue || values[0].AccessToken != "sso-token" || values[0].CloudflareCookies != "cf_clearance=clearance-token" || values[0].Email != test.name+"@example.com" || values[0].UserID != test.name+"-user-id" {
 				t.Fatalf("round-trip result = %#v, values = %#v", result, values)
 			}
-			if test.providerValue == accountdomain.ProviderWeb && (values[0].WebTier != accountdomain.WebTierSuper || values[0].WebNSFWEnabledAt == nil || !values[0].WebNSFWEnabledAt.Equal(nsfwAt) || values[0].WebTermsAcceptedAt == nil || !values[0].WebTermsAcceptedAt.Equal(tosAt) || values[0].WebTermsAcceptedVersion != accountdomain.CurrentWebTermsVersion || values[0].WebBirthDateSetAt == nil || !values[0].WebBirthDateSetAt.Equal(birthDateAt)) {
+			if test.providerValue == accountdomain.ProviderWeb && (values[0].WebTier != accountdomain.WebTierSuper || values[0].WebNSFWEnabledAt == nil || !values[0].WebNSFWEnabledAt.Equal(nsfwAt) || values[0].WebTermsAcceptedAt == nil || !values[0].WebTermsAcceptedAt.Equal(tosAt) || values[0].WebTermsAcceptedVersion != accountdomain.CurrentWebTermsVersion || values[0].WebBirthDateSetAt == nil || !values[0].WebBirthDateSetAt.Equal(birthDateAt) || values[0].WebTrainingDataExcludedAt == nil || !values[0].WebTrainingDataExcludedAt.Equal(birthDateAt)) {
 				t.Fatalf("web metadata = %#v", values[0])
 			}
 			var imported ImportResult
@@ -280,7 +280,7 @@ func TestExportProviderCredentialsRoundTripsSSOProviders(t *testing.T) {
 			if err != nil || stored.Email != test.name+"@example.com" || stored.UserID != test.name+"-user-id" {
 				t.Fatalf("reimported account = %#v, error = %v", stored, err)
 			}
-			if test.providerValue == accountdomain.ProviderWeb && (stored.WebNSFWEnabledAt == nil || !stored.WebNSFWEnabledAt.Equal(nsfwAt) || stored.WebTermsAcceptedAt == nil || !stored.WebTermsAcceptedAt.Equal(tosAt) || stored.WebTermsAcceptedVersion != accountdomain.CurrentWebTermsVersion || stored.WebBirthDateSetAt == nil || !stored.WebBirthDateSetAt.Equal(birthDateAt)) {
+			if test.providerValue == accountdomain.ProviderWeb && (stored.WebNSFWEnabledAt == nil || !stored.WebNSFWEnabledAt.Equal(nsfwAt) || stored.WebTermsAcceptedAt == nil || !stored.WebTermsAcceptedAt.Equal(tosAt) || stored.WebTermsAcceptedVersion != accountdomain.CurrentWebTermsVersion || stored.WebBirthDateSetAt == nil || !stored.WebBirthDateSetAt.Equal(birthDateAt) || stored.WebTrainingDataExcludedAt == nil || !stored.WebTrainingDataExcludedAt.Equal(birthDateAt)) {
 				t.Fatalf("reimported web metadata = %#v", stored)
 			}
 		})

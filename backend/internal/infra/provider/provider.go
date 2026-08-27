@@ -443,23 +443,24 @@ type DeviceAuthorization struct {
 
 // CredentialSeed represents an OAuth credential not yet persisted after login or import.
 type CredentialSeed struct {
-	Provider                account.Provider
-	AuthType                account.AuthType
-	WebTier                 account.WebTier
-	Name                    string
-	Email                   string
-	UserID                  string
-	TeamID                  string
-	SourceKey               string
-	OIDCClientID            string
-	AccessToken             string
-	RefreshToken            string
-	CloudflareCookies       string
-	ExpiresAt               time.Time
-	WebNSFWEnabledAt        *time.Time
-	WebTermsAcceptedAt      *time.Time
-	WebTermsAcceptedVersion int
-	WebBirthDateSetAt       *time.Time
+	Provider                  account.Provider
+	AuthType                  account.AuthType
+	WebTier                   account.WebTier
+	Name                      string
+	Email                     string
+	UserID                    string
+	TeamID                    string
+	SourceKey                 string
+	OIDCClientID              string
+	AccessToken               string
+	RefreshToken              string
+	CloudflareCookies         string
+	ExpiresAt                 time.Time
+	WebNSFWEnabledAt          *time.Time
+	WebTermsAcceptedAt        *time.Time
+	WebTermsAcceptedVersion   int
+	WebBirthDateSetAt         *time.Time
+	WebTrainingDataExcludedAt *time.Time
 }
 
 type QuotaSnapshot struct {

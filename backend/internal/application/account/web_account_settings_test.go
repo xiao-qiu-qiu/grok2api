@@ -54,8 +54,8 @@ func TestWebAccountSettingsAreWebOnlyAndGenerateBirthDate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updatedWeb.WebTermsAcceptedAt == nil || updatedWeb.WebTermsAcceptedVersion != accountdomain.CurrentWebTermsVersion || updatedWeb.WebBirthDateSetAt == nil || updatedWeb.WebNSFWEnabledAt == nil || !updatedWeb.WebTermsAcceptedAt.Equal(service.now()) || !updatedWeb.WebBirthDateSetAt.Equal(service.now()) || !updatedWeb.WebNSFWEnabledAt.Equal(service.now()) {
-		t.Fatalf("profile markers terms=%v version=%d birth=%v nsfw=%v", updatedWeb.WebTermsAcceptedAt, updatedWeb.WebTermsAcceptedVersion, updatedWeb.WebBirthDateSetAt, updatedWeb.WebNSFWEnabledAt)
+	if updatedWeb.WebTermsAcceptedAt == nil || updatedWeb.WebTermsAcceptedVersion != accountdomain.CurrentWebTermsVersion || updatedWeb.WebBirthDateSetAt == nil || updatedWeb.WebNSFWEnabledAt == nil || updatedWeb.WebTrainingDataExcludedAt == nil || !updatedWeb.WebTermsAcceptedAt.Equal(service.now()) || !updatedWeb.WebBirthDateSetAt.Equal(service.now()) || !updatedWeb.WebNSFWEnabledAt.Equal(service.now()) || !updatedWeb.WebTrainingDataExcludedAt.Equal(service.now()) {
+		t.Fatalf("profile markers terms=%v version=%d birth=%v nsfw=%v training=%v", updatedWeb.WebTermsAcceptedAt, updatedWeb.WebTermsAcceptedVersion, updatedWeb.WebBirthDateSetAt, updatedWeb.WebNSFWEnabledAt, updatedWeb.WebTrainingDataExcludedAt)
 	}
 	if err := service.AcceptWebTerms(ctx, webAccount.ID); err != nil {
 		t.Fatal(err)
@@ -66,14 +66,47 @@ func TestWebAccountSettingsAreWebOnlyAndGenerateBirthDate(t *testing.T) {
 	if err := service.EnableWebNSFW(ctx, webAccount.ID); err != nil {
 		t.Fatal(err)
 	}
-	if adapter.terms != 1 || adapter.birthCalls != 1 || adapter.nsfw != 1 {
-		t.Fatalf("recorded steps repeated: terms=%d birth=%d nsfw=%d", adapter.terms, adapter.birthCalls, adapter.nsfw)
+	if adapter.terms != 1 || adapter.birthCalls != 1 || adapter.nsfw != 1 || adapter.exclude != 1 {
+		t.Fatalf("recorded steps repeated: terms=%d birth=%d nsfw=%d exclude=%d", adapter.terms, adapter.birthCalls, adapter.nsfw, adapter.exclude)
 	}
 	if err := service.AcceptWebTerms(ctx, buildAccount.ID); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("build err = %v", err)
 	}
 	if err := service.SetWebBirthDate(ctx, buildAccount.ID); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("build birth err = %v", err)
+	}
+}
+
+func TestExcludeWebAccountFromTrainingSkipsRecordedMarker(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	service, repo, adapter := newWebAccountSettingsTestService(t)
+	credential := createWebAccountForScriptTest(t, ctx, repo, "training-marker")
+
+	if err := service.ExcludeWebAccountFromTraining(ctx, credential.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ExcludeWebAccountFromTraining(ctx, credential.ID); err != nil {
+		t.Fatal(err)
+	}
+	if adapter.exclude != 1 {
+		t.Fatalf("exclude calls = %d, want 1", adapter.exclude)
+	}
+	stored, err := repo.Get(ctx, credential.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.WebTrainingDataExcludedAt == nil || !stored.WebTrainingDataExcludedAt.Equal(service.now()) {
+		t.Fatalf("training marker = %v, want %s", stored.WebTrainingDataExcludedAt, service.now())
+	}
+}
+
+func TestPendingWebAccountScriptOptionsSkipsTrainingMarker(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	options := WebAccountScriptOptions{ExcludeFromTraining: true}
+	if got := pendingWebAccountScriptOptions(accountdomain.Credential{WebTrainingDataExcludedAt: &now}, options); got != (WebAccountScriptOptions{}) {
+		t.Fatalf("options = %#v, want empty", got)
 	}
 }
 

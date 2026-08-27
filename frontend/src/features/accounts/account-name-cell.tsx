@@ -1,4 +1,4 @@
-import { Bot, Compass, Handshake, SquareTerminal, VenusAndMars, Webhook, type LucideIcon } from "lucide-react";
+import { Bot, Compass, Handshake, ShieldCheck, SquareTerminal, VenusAndMars, Webhook, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -142,6 +142,25 @@ export function AccountNameCell({ account }: { account: AccountDTO }) {
                   : account.buildBotFlagSource === 1
                     ? t("accounts.botRiskTooltipSource1")
                     : t("accounts.botRiskTooltip")}
+              </TooltipContent>
+            </Tooltip>
+            </>
+          ) : null}
+        {account.trainingDataExcludedAt ? (
+          <>
+            <span className="mx-2 h-3 w-px shrink-0 bg-border" aria-hidden="true" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  tabIndex={0}
+                  aria-label={t("accounts.trainingDataExcludedMark")}
+                  className="inline-flex cursor-help text-emerald-600 focus-visible:outline-none dark:text-emerald-400"
+                >
+                  <ShieldCheck className="size-3.5" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {t("accounts.trainingDataExcludedTooltip", { time: formatDateTime(account.trainingDataExcludedAt, i18n.language) })}
               </TooltipContent>
             </Tooltip>
           </>

@@ -61,6 +61,7 @@ func toAccountDomain(value accountModel) account.Credential {
 	var webTermsAcceptedAt *time.Time
 	var webTermsAcceptedVersion int
 	var webBirthDateSetAt *time.Time
+	var webTrainingDataExcludedAt *time.Time
 	var egressIdentity string
 	if value.WebProfile != nil {
 		webTier = account.WebTier(value.WebProfile.Tier)
@@ -71,6 +72,7 @@ func toAccountDomain(value accountModel) account.Credential {
 			webTermsAcceptedAt = value.WebProfile.TermsAcceptedAt
 		}
 		webBirthDateSetAt = value.WebProfile.BirthDateSetAt
+		webTrainingDataExcludedAt = value.WebProfile.TrainingDataExcludedAt
 		egressIdentity = value.WebProfile.EgressIdentity
 	}
 	buildRouteMode := account.BuildRouteMode(value.BuildRouteMode)
@@ -88,7 +90,8 @@ func toAccountDomain(value accountModel) account.Credential {
 		CooldownUntil: value.CooldownUntil, LastError: value.LastError, LastUsedAt: value.LastUsedAt,
 		ObservedModel: value.ObservedModel, ObservedModelAt: value.ObservedModelAt, WebTier: webTier, WebTierSyncedAt: webTierSyncedAt,
 		WebNSFWEnabledAt: webNSFWEnabledAt, WebTermsAcceptedAt: webTermsAcceptedAt, WebTermsAcceptedVersion: webTermsAcceptedVersion, WebBirthDateSetAt: webBirthDateSetAt, EgressIdentity: egressIdentity,
-		EgressNodeID: valueEgressNodeID(value.EgressNodeID), EgressAssignmentMode: account.EgressAssignmentMode(value.EgressAssignmentMode), EgressAssignedAt: value.EgressAssignedAt,
+		WebTrainingDataExcludedAt: webTrainingDataExcludedAt,
+		EgressNodeID:              valueEgressNodeID(value.EgressNodeID), EgressAssignmentMode: account.EgressAssignmentMode(value.EgressAssignmentMode), EgressAssignedAt: value.EgressAssignedAt,
 		BuildAPIFallback: value.BuildAPIFallback, BuildRouteMode: buildRouteMode,
 		BuildSuperEntitled: value.BuildSuperEntitled && account.Provider(value.Provider) == account.ProviderBuild,
 		BuildBotFlagSource: normalizedBuildBotFlagSource(account.Provider(value.Provider), value.Credential),
@@ -199,7 +202,7 @@ func fromWebProfileDomain(value account.Credential) *webAccountProfileModel {
 	if tier == "" {
 		tier = account.WebTierAuto
 	}
-	return &webAccountProfileModel{AccountID: value.ID, Tier: string(tier), SyncedAt: value.WebTierSyncedAt, NSFWEnabledAt: value.WebNSFWEnabledAt, TermsAcceptedAt: value.WebTermsAcceptedAt, TermsAcceptedVersion: value.WebTermsAcceptedVersion, BirthDateSetAt: value.WebBirthDateSetAt, EgressIdentity: value.EgressIdentity}
+	return &webAccountProfileModel{AccountID: value.ID, Tier: string(tier), SyncedAt: value.WebTierSyncedAt, NSFWEnabledAt: value.WebNSFWEnabledAt, TermsAcceptedAt: value.WebTermsAcceptedAt, TermsAcceptedVersion: value.WebTermsAcceptedVersion, BirthDateSetAt: value.WebBirthDateSetAt, TrainingDataExcludedAt: value.WebTrainingDataExcludedAt, EgressIdentity: value.EgressIdentity}
 }
 
 func accountIdentity(value account.Credential) string {

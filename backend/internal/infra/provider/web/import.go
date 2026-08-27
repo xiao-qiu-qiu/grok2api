@@ -23,17 +23,18 @@ type importDocument struct {
 }
 
 type importEntry struct {
-	Name              string     `json:"name"`
-	Email             string     `json:"email,omitempty"`
-	UserID            string     `json:"user_id,omitempty"`
-	SSOToken          string     `json:"sso_token"`
-	Token             string     `json:"token"`
-	Tier              string     `json:"tier"`
-	CloudflareCookies string     `json:"cloudflare_cookies"`
-	NSFWEnabledAt     *time.Time `json:"nsfw_enabled_at,omitempty"`
-	TOSAcceptedAt     *time.Time `json:"tos_accepted_at,omitempty"`
-	TOSVersion        int        `json:"tos_version,omitempty"`
-	BirthDateSetAt    *time.Time `json:"birth_date_set_at,omitempty"`
+	Name                   string     `json:"name"`
+	Email                  string     `json:"email,omitempty"`
+	UserID                 string     `json:"user_id,omitempty"`
+	SSOToken               string     `json:"sso_token"`
+	Token                  string     `json:"token"`
+	Tier                   string     `json:"tier"`
+	CloudflareCookies      string     `json:"cloudflare_cookies"`
+	NSFWEnabledAt          *time.Time `json:"nsfw_enabled_at,omitempty"`
+	TOSAcceptedAt          *time.Time `json:"tos_accepted_at,omitempty"`
+	TOSVersion             int        `json:"tos_version,omitempty"`
+	BirthDateSetAt         *time.Time `json:"birth_date_set_at,omitempty"`
+	TrainingDataExcludedAt *time.Time `json:"training_data_excluded_at,omitempty"`
 }
 
 func (a *Adapter) ParseImportedCredentials(data []byte) ([]provider.CredentialSeed, error) {
@@ -84,6 +85,7 @@ func (a *Adapter) ParseImportedCredentials(data []byte) ([]provider.CredentialSe
 			SourceKey: "sso:" + security.HashToken(token), AccessToken: token, CloudflareCookies: entry.CloudflareCookies,
 			WebNSFWEnabledAt: entry.NSFWEnabledAt, WebTermsAcceptedAt: entry.TOSAcceptedAt,
 			WebTermsAcceptedVersion: entry.TOSVersion, WebBirthDateSetAt: entry.BirthDateSetAt,
+			WebTrainingDataExcludedAt: entry.TrainingDataExcludedAt,
 		})
 	}
 	return result, nil
@@ -127,6 +129,7 @@ func (a *Adapter) MarshalCredentials(values []provider.CredentialSeed) ([]byte, 
 			Tier: string(value.WebTier), CloudflareCookies: value.CloudflareCookies,
 			NSFWEnabledAt: value.WebNSFWEnabledAt, TOSAcceptedAt: value.WebTermsAcceptedAt,
 			TOSVersion: value.WebTermsAcceptedVersion, BirthDateSetAt: value.WebBirthDateSetAt,
+			TrainingDataExcludedAt: value.WebTrainingDataExcludedAt,
 		})
 	}
 	data, err := json.MarshalIndent(document, "", "  ")

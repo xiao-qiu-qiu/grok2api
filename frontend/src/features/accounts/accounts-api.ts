@@ -72,6 +72,7 @@ export type AccountDTO = {
   webTierSyncedAt?: string;
   nsfwEnabledAt?: string;
   termsAcceptedAt?: string;
+  trainingDataExcludedAt?: string;
   name: string;
   email?: string;
   userId?: string;
@@ -188,7 +189,7 @@ const quotaWindowValidator = hasShape({
 const linkedAccountValidator = hasShape({ id: isString, provider: isOneOf("grok_build", "grok_web", "grok_console"), name: isString, email: isOptional(isString), userId: isOptional(isString) });
 const accountValidator = hasShape({
   id: isString, provider: isOneOf("grok_build", "grok_web", "grok_console"), authType: isOneOf("oauth", "sso"), webTier: isOptional(isOneOf("auto", "basic", "super", "heavy")),
-  webTierSyncedAt: isOptional(isString), nsfwEnabledAt: isOptional(isString), termsAcceptedAt: isOptional(isString), name: isString, email: isOptional(isString), userId: isOptional(isString), teamId: isOptional(isString),
+  webTierSyncedAt: isOptional(isString), nsfwEnabledAt: isOptional(isString), termsAcceptedAt: isOptional(isString), trainingDataExcludedAt: isOptional(isString), name: isString, email: isOptional(isString), userId: isOptional(isString), teamId: isOptional(isString),
   enabled: isBoolean, authStatus: isOneOf("active", "reauthRequired"), expiresAt: isOptional(isString), refreshable: isBoolean, cloudflareCookieConfigured: isBoolean,
   buildSuperEntitled: isBoolean, buildRouteMode: isOneOf("auto", "build", "xai"), buildBotFlagged: isBoolean, buildBotFlagSource: isOptional(isNumber), modelSyncFailed: isOptional(isBoolean), refreshDueAt: isOptional(isString), lastRefreshAt: isOptional(isString), refreshFailureCount: isNumber,
   egressNodeId: isOptional(isString), egressAssignmentMode: isOptional(isOneOf("manual", "auto")),

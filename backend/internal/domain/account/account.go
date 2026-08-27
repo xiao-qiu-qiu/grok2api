@@ -202,10 +202,13 @@ type Credential struct {
 	// WebBirthDateSetAt 记录 Grok Web 上游首次确认生日已设置的时间。
 	// 该字段用于避免批量脚本重复请求不可修改的生日接口。
 	WebBirthDateSetAt *time.Time
-	LinkedAccountID   uint64
-	LinkedAccountName string
-	LinkedProvider    Provider
-	LinkedAccounts    []LinkedAccount
+	// WebTrainingDataExcludedAt 记录 Grok Web 上游确认已关闭训练数据使用的时间。
+	// 该字段用于管理端展示状态并避免重复执行幂等设置请求。
+	WebTrainingDataExcludedAt *time.Time
+	LinkedAccountID           uint64
+	LinkedAccountName         string
+	LinkedProvider            Provider
+	LinkedAccounts            []LinkedAccount
 	// BuildAPIFallback 仅记录 grok_build 曾因当次 Build 403 成功回退到 XAI。
 	// 它不参与路由；每个新请求仍先走 Build，只有当次严格 403 才可尝试 XAI。
 	// token refresh / SSO 转换 / 普通 upsert / 重启不得清除。

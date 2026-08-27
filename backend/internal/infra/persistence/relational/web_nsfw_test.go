@@ -34,12 +34,15 @@ func TestWebNSFWMarkerPersistsAcrossAccountUpserts(t *testing.T) {
 	if err := repo.MarkWebBirthDateSet(ctx, credential.ID, first); err != nil {
 		t.Fatal(err)
 	}
+	if err := repo.MarkWebTrainingDataExcluded(ctx, credential.ID, first); err != nil {
+		t.Fatal(err)
+	}
 	marked, err := repo.Get(ctx, credential.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if marked.WebNSFWEnabledAt == nil || !marked.WebNSFWEnabledAt.Equal(first) || marked.WebTermsAcceptedAt == nil || !marked.WebTermsAcceptedAt.Equal(first) || marked.WebTermsAcceptedVersion != account.CurrentWebTermsVersion || marked.WebBirthDateSetAt == nil || !marked.WebBirthDateSetAt.Equal(first) {
-		t.Fatalf("markers nsfw=%v terms=%v version=%d birth=%v, want %s", marked.WebNSFWEnabledAt, marked.WebTermsAcceptedAt, marked.WebTermsAcceptedVersion, marked.WebBirthDateSetAt, first)
+	if marked.WebNSFWEnabledAt == nil || !marked.WebNSFWEnabledAt.Equal(first) || marked.WebTermsAcceptedAt == nil || !marked.WebTermsAcceptedAt.Equal(first) || marked.WebTermsAcceptedVersion != account.CurrentWebTermsVersion || marked.WebBirthDateSetAt == nil || !marked.WebBirthDateSetAt.Equal(first) || marked.WebTrainingDataExcludedAt == nil || !marked.WebTrainingDataExcludedAt.Equal(first) {
+		t.Fatalf("markers nsfw=%v terms=%v version=%d birth=%v training=%v, want %s", marked.WebNSFWEnabledAt, marked.WebTermsAcceptedAt, marked.WebTermsAcceptedVersion, marked.WebBirthDateSetAt, marked.WebTrainingDataExcludedAt, first)
 	}
 
 	if err := repo.MarkWebNSFWEnabled(ctx, credential.ID, first.Add(time.Hour)); err != nil {
@@ -49,6 +52,9 @@ func TestWebNSFWMarkerPersistsAcrossAccountUpserts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := repo.MarkWebBirthDateSet(ctx, credential.ID, first.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkWebTrainingDataExcluded(ctx, credential.ID, first.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.UpsertManyByIdentity(ctx, []account.Credential{{
@@ -64,8 +70,8 @@ func TestWebNSFWMarkerPersistsAcrossAccountUpserts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if refreshed.WebNSFWEnabledAt == nil || !refreshed.WebNSFWEnabledAt.Equal(first) || refreshed.WebTermsAcceptedAt == nil || !refreshed.WebTermsAcceptedAt.Equal(first) || refreshed.WebTermsAcceptedVersion != account.CurrentWebTermsVersion || refreshed.WebBirthDateSetAt == nil || !refreshed.WebBirthDateSetAt.Equal(first) {
-		t.Fatalf("markers after upsert nsfw=%v terms=%v version=%d birth=%v, want first timestamp %s", refreshed.WebNSFWEnabledAt, refreshed.WebTermsAcceptedAt, refreshed.WebTermsAcceptedVersion, refreshed.WebBirthDateSetAt, first)
+	if refreshed.WebNSFWEnabledAt == nil || !refreshed.WebNSFWEnabledAt.Equal(first) || refreshed.WebTermsAcceptedAt == nil || !refreshed.WebTermsAcceptedAt.Equal(first) || refreshed.WebTermsAcceptedVersion != account.CurrentWebTermsVersion || refreshed.WebBirthDateSetAt == nil || !refreshed.WebBirthDateSetAt.Equal(first) || refreshed.WebTrainingDataExcludedAt == nil || !refreshed.WebTrainingDataExcludedAt.Equal(first) {
+		t.Fatalf("markers after upsert nsfw=%v terms=%v version=%d birth=%v training=%v, want first timestamp %s", refreshed.WebNSFWEnabledAt, refreshed.WebTermsAcceptedAt, refreshed.WebTermsAcceptedVersion, refreshed.WebBirthDateSetAt, refreshed.WebTrainingDataExcludedAt, first)
 	}
 }
 
@@ -88,6 +94,9 @@ func TestWebNSFWMarkerRejectsNonWebAccounts(t *testing.T) {
 	}
 	if err := repo.MarkWebBirthDateSet(ctx, credential.ID, time.Now()); err == nil {
 		t.Fatal("expected non-Web birth marker rejection")
+	}
+	if err := repo.MarkWebTrainingDataExcluded(ctx, credential.ID, time.Now()); err == nil {
+		t.Fatal("expected non-Web training marker rejection")
 	}
 }
 
@@ -152,6 +161,9 @@ func TestInitializeSchemaAddsWebNSFWMarkerColumn(t *testing.T) {
 	if err := database.db.Migrator().DropColumn(&webAccountProfileModel{}, "BirthDateSetAt"); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.db.Migrator().DropColumn(&webAccountProfileModel{}, "TrainingDataExcludedAt"); err != nil {
+		t.Fatal(err)
+	}
 	if database.db.Migrator().HasColumn(&webAccountProfileModel{}, "NSFWEnabledAt") {
 		t.Fatal("legacy schema still contains NSFW marker column")
 	}
@@ -163,6 +175,9 @@ func TestInitializeSchemaAddsWebNSFWMarkerColumn(t *testing.T) {
 	}
 	if database.db.Migrator().HasColumn(&webAccountProfileModel{}, "BirthDateSetAt") {
 		t.Fatal("legacy schema still contains birth marker column")
+	}
+	if database.db.Migrator().HasColumn(&webAccountProfileModel{}, "TrainingDataExcludedAt") {
+		t.Fatal("legacy schema still contains training marker column")
 	}
 
 	if err := database.InitializeSchema(ctx); err != nil {
@@ -180,11 +195,14 @@ func TestInitializeSchemaAddsWebNSFWMarkerColumn(t *testing.T) {
 	if !database.db.Migrator().HasColumn(&webAccountProfileModel{}, "BirthDateSetAt") {
 		t.Fatal("schema migration did not add birth marker column")
 	}
+	if !database.db.Migrator().HasColumn(&webAccountProfileModel{}, "TrainingDataExcludedAt") {
+		t.Fatal("schema migration did not add training marker column")
+	}
 	refreshed, err := repo.Get(ctx, credential.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if refreshed.ID != credential.ID || refreshed.WebNSFWEnabledAt != nil || refreshed.WebTermsAcceptedAt != nil || refreshed.WebBirthDateSetAt != nil {
+	if refreshed.ID != credential.ID || refreshed.WebNSFWEnabledAt != nil || refreshed.WebTermsAcceptedAt != nil || refreshed.WebBirthDateSetAt != nil || refreshed.WebTrainingDataExcludedAt != nil {
 		t.Fatalf("migrated account = %#v", refreshed)
 	}
 }
