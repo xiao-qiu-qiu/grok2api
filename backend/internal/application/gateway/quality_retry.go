@@ -17,15 +17,20 @@ import (
 )
 
 const (
-	ErrorQualityDegraded             = "quality_degraded"
-	qualityRetryFailOpen             = "fail_open"
-	qualityRetryFailClosed           = "fail_closed"
-	defaultQualityMaxAttempts        = 6
-	defaultQualityHoldTimeout        = 30 * time.Second
-	defaultQualityMinOutput          = int64(8)
-	defaultMissingThinkingCooldown   = 12 * time.Hour
-	lastErrorMissingThinking         = accountdomain.LastErrorMissingThinking
-	lastErrorMissingThinkingDisabled = accountdomain.LastErrorMissingThinkingDisabled
+	ErrorQualityDegraded                   = "quality_degraded"
+	qualityRetryFailOpen                   = "fail_open"
+	qualityRetryFailClosed                 = "fail_closed"
+	defaultQualityMaxAttempts              = 6
+	defaultQualityHoldTimeout              = 30 * time.Second
+	defaultQualityMinOutput                = int64(8)
+	defaultMinEncryptedBytes               = 256
+	defaultEncryptedBytesPerReasoningToken = 4
+	defaultBurstFlushMS                    = int64(1000)
+	defaultBurstMaxVisible                 = int64(32)
+	defaultBurstMinReasoning               = int64(80)
+	defaultMissingThinkingCooldown         = 12 * time.Hour
+	lastErrorMissingThinking               = accountdomain.LastErrorMissingThinking
+	lastErrorMissingThinkingDisabled       = accountdomain.LastErrorMissingThinkingDisabled
 	// An empty stream that idles while held is treated as an account-quality
 	// failure: the request can still rotate before any bytes reach the client.
 	qualityIdleAccountCooldown = 15 * time.Minute
@@ -47,7 +52,9 @@ type QualityRetryRuntime struct {
 	AccountCooldown time.Duration
 	// IdleAccountCooldown is applied to truly empty upstream streams
 	// (idle timeout / empty peek). Missing-thinking still uses AccountCooldown.
-	IdleAccountCooldown time.Duration
+	IdleAccountCooldown             time.Duration
+	MinEncryptedBytes               int
+	EncryptedBytesPerReasoningToken int
 }
 
 // QualityStreamSignals is the hold classifier input. Tests drive this
@@ -61,6 +68,9 @@ type QualityStreamSignals struct {
 	VisibleTokens    int64
 	ReasoningTokens  int64
 	OutputTokens     int64
+	EncryptedBytes   int
+	FirstVisible     bool
+	VisibleFlushMS   int64
 	Terminal         bool
 	HoldExpired      bool
 }
@@ -100,6 +110,12 @@ func normalizeQualityRetry(cfg QualityRetryRuntime) QualityRetryRuntime {
 	if cfg.IdleAccountCooldown <= 0 {
 		cfg.IdleAccountCooldown = qualityIdleAccountCooldown
 	}
+	if cfg.MinEncryptedBytes <= 0 {
+		cfg.MinEncryptedBytes = defaultMinEncryptedBytes
+	}
+	if cfg.EncryptedBytesPerReasoningToken <= 0 {
+		cfg.EncryptedBytesPerReasoningToken = defaultEncryptedBytesPerReasoningToken
+	}
 	cfg.OnExhausted = normalizeQualityExhaustionPolicy(cfg.OnExhausted)
 	return cfg
 }
@@ -119,27 +135,72 @@ func (s *Service) qualityRetryConfig() QualityRetryRuntime {
 	return normalizeQualityRetry(QualityRetryRuntime{})
 }
 
+// encryptedThinkingFloor is max(minBytes, reasoningTokens*bytesPerToken).
+// A non-empty stub such as "gAAAA-cipher" is not thinking.
+func encryptedThinkingFloor(minBytes, bytesPerToken int, reasoningTokens int64) int {
+	if minBytes <= 0 {
+		minBytes = defaultMinEncryptedBytes
+	}
+	if bytesPerToken <= 0 {
+		bytesPerToken = defaultEncryptedBytesPerReasoningToken
+	}
+	floor := minBytes
+	if reasoningTokens > 0 {
+		need := int(reasoningTokens) * bytesPerToken
+		if need > floor {
+			floor = need
+		}
+	}
+	return floor
+}
+
+func qualityIsBurstDump(sig QualityStreamSignals, minOutput int64) bool {
+	visible := sig.VisibleTokens
+	floor := encryptedThinkingFloor(0, 0, sig.ReasoningTokens)
+	barelyCipher := sig.EncryptedBytes > 0 && sig.EncryptedBytes < floor*2
+	flushed := sig.FirstVisible && sig.VisibleFlushMS >= 0 && sig.VisibleFlushMS < defaultBurstFlushMS
+	heavyReasoning := sig.ReasoningTokens >= defaultBurstMinReasoning
+	shortVisible := visible > 0 && visible < defaultBurstMaxVisible
+	// Hold timed out, then a short greeting dumped with a large reasoning bill
+	// (TUI "你好" after 30s / 954 thinking tokens).
+	if sig.HoldExpired && shortVisible && heavyReasoning {
+		return true
+	}
+	// Cipher met the floor so HasThinking is true, but visible tokens then
+	// dump in <1s with almost no answer (148 out / 140 reasoning in 0.7s).
+	if flushed && shortVisible && heavyReasoning {
+		return true
+	}
+	if barelyCipher && flushed && (visible >= minOutput || heavyReasoning) {
+		return true
+	}
+	return false
+}
+
 // ClassifyQualityHold decides whether a held stream may be forwarded.
-// Streamed thinking always delivers: reasoning/summary deltas, or a
-// reasoning item with encrypted_content. Usage.reasoning_tokens alone
-// does not — degraded upstreams fill that field without ciphertext or
-// deltas. A finished sample with enough visible output and no streamed
-// thinking is withheld.
+// Streamed thinking delivers: reasoning/summary deltas, or a reasoning item
+// whose encrypted_content meets the ciphertext floor. A non-empty stub such
+// as "gAAAA-cipher" is not thinking. Usage.reasoning_tokens alone does not —
+// degraded upstreams fill that field without ciphertext or deltas. A finished
+// sample with enough visible output and no streamed thinking is withheld.
 // Short replies below minOutput are delivered so "ok"/"yes" is not retried.
 // A hold timeout with no visible output is not fail-open: keep waiting for
 // more bytes or a stream abort so an empty hang is not flushed as HTTP 200.
 //
 // An empty reasoning stub is not thinking. Before the hold deadline, wait for
-// real evidence or a terminal event. If the deadline expires while the stream
-// is still open and already has visible output, the result is inconclusive:
-// release it without penalizing the account. A stub-only empty stream keeps
-// waiting for idle/terminal handling. This keeps HoldTimeout a real latency
-// bound without reopening the empty-stream 200 response path.
+// real evidence or a terminal event. A stub plus enough visible output at the
+// deadline is withheld — that is the TUI dump after 30s, not late ciphertext.
+// Stub-only empty streams keep waiting for idle/terminal handling.
+// HasThinking that is only a thin ciphertext dump after the hold (or a
+// barely-over-floor flush in <1s) is still withheld.
 func ClassifyQualityHold(sig QualityStreamSignals, minOutput int64) QualityVerdict {
 	if minOutput <= 0 {
 		minOutput = defaultQualityMinOutput
 	}
 	if sig.HasThinking {
+		if qualityIsBurstDump(sig, minOutput) {
+			return QualityWithhold
+		}
 		return QualityDeliver
 	}
 	// Prefer observed/derived visible output. Total output includes reasoning
@@ -151,10 +212,7 @@ func ClassifyQualityHold(sig QualityStreamSignals, minOutput int64) QualityVerdi
 		output = sig.OutputTokens
 	}
 	enough := output >= minOutput
-	if sig.ReasoningStarted && !sig.Terminal {
-		if sig.HoldExpired && output > 0 {
-			return QualityDeliver
-		}
+	if sig.ReasoningStarted && !sig.Terminal && !sig.HoldExpired {
 		return QualityWait
 	}
 	if sig.Terminal {
@@ -286,34 +344,22 @@ func CommitQualityHold(verdict QualityVerdict, qualityAttempt, maxAttempts int, 
 }
 
 func shouldHoldQualityStream(input Input, ownership *inferencedomain.ResponseOwnership, route modeldomain.Route, operation audit.Operation, cfg QualityRetryRuntime) bool {
-	if !cfg.Enabled || !input.Streaming || input.ForcedEgressNodeID != 0 || ownership != nil || input.skipQualityHold {
+	if !cfg.Enabled || !input.Streaming || input.ForcedEgressNodeID != 0 || input.skipQualityHold {
 		return false
 	}
 	switch operation {
-	case audit.OperationChat, audit.OperationResponses, audit.OperationMessages, "":
+	case audit.OperationChat, audit.OperationResponses, audit.OperationMessages, audit.OperationCompaction, "":
 	default:
-		return false
-	}
-	// TUI compaction is a normal /v1/responses body (no compaction_trigger).
-	// Keep this defensive body check in addition to skipQualityHold so a caller
-	// that bypasses CreateResponse cannot withhold a 100s+ summary as missing-thinking.
-	if isResponsesCompactionRequest(input.Body) {
 		return false
 	}
 	if route.Provider != accountdomain.ProviderBuild && route.Provider != accountdomain.ProviderConsole {
 		return false
 	}
-	// Client-executed tools are safe to hold: their calls have not reached the
-	// client yet, and completed results in the next request are immutable input.
-	// Hosted tools are different. Retrying them can repeat an upstream search,
-	// sandbox run, image job, or remote MCP call, so retain the old no-replay
-	// safety boundary for any request that declares one.
-	if qualityRequestHasReplayUnsafeHostedTools(input.Body) {
-		return false
-	}
-	// Aliases are rewritten before this gate, so inspect the effective request
-	// body instead of only the reasoning-capable base model. In particular,
-	// grok-4.3-none becomes grok-4.3 plus an explicit disabled setting.
+	// TUI always declares tools (including hosted web_search / image jobs) and
+	// follow-ups carry previous_response_id. Skipping either let 0-thinking
+	// dumps through on the common agent loop. Keep holding; the attempt loop
+	// unpins after the first missing-thinking hit. Skip only when the request
+	// explicitly disables reasoning.
 	if qualityRequestDisablesReasoning(input.Body) {
 		return false
 	}

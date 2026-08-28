@@ -123,14 +123,15 @@ audit:
   ledgerUnhealthyGrace: 10s
   ledgerQueueHighWatermarkPercent: 90
 
-# [按需启用] Grok Build 出口质量守护。仅配置后仍不会自动启动 sidecar；
-# 使用 docker compose --profile quality-guard up -d --build 启动。
+# 本 fork 的 qualityGuard / requestRetry 对齐 18183 lab。
+# docker compose up -d 会同时拉起 sidecar（passive，不额外烧 token）。
+# 往 chenyme/grok2api 提 PR 时不要带这些 lab 默认。
 qualityGuard:
-  enabled: false
+  enabled: true
   # 主程序会自动创建并复用不可导出的内部探测身份，无需配置 Client Key。
   # 使用已验证会输出推理 Token 的 Build 模型时，内置恢复探针还会校验 reasoning Token。
   model: "grok-4.6"
-  mode: hybrid # passive | active | hybrid
+  mode: passive # passive | active | hybrid
   activeInterval: 30m
   passivePollInterval: 5s
   softTPS: 500
@@ -139,7 +140,7 @@ qualityGuard:
   consecutiveErrors: 2
   quarantineDuration: 5m
   noAccountBackoff: 5m
-  minimumHealthyNodes: 3
+  minimumHealthyNodes: 1
   maxOutputTokens: 384
   failClosed: false
   minimumGenerationWindow: 1s
@@ -149,15 +150,13 @@ qualityGuard:
   rotationTimeout: 45s
   nodeIDs: []
   rotatableNodeIDs: []
-  # Optional request-path withhold/retry for thinking models.
-  # Observe up to 30s for real reasoning evidence. If upstream has announced
-  # a reasoning item and visible output but proof arrives later, the still-open
-  # stream is released at the deadline without penalizing the account. Empty or
-  # terminal no-thinking responses are still retried.
-  # Missing thinking with enough visible output is not delivered; another
-  # account is tried (up to maxAttempts). fail_closed returns 503 instead
-  # of the last body. Sidecar qualityGuard.enabled stays false until you
-  # start the quality-guard profile.
+  # 缺 thinking 扣流换号。本 fork 默认启用拦截，参数与上游 PR 推荐值相同。
+  # 短 encrypted_content stub 不算思考；floor = max(minEncryptedBytes,
+  # reasoning_tokens * encryptedBytesPerReasoningToken)。
+  # stub + 足够可见输出在 hold 到期后扣住（TUI 30s 后的「你好」）。
+  # floor 已达标但 1 秒内吐短回复的也扣。TUI 续聊 / hosted tools 仍 hold。
+  # 3s hold 会把 grok-4.6 流末尾的 encrypted thinking 误判成 missing-thinking；
+  # 30s 是校验上限，也是 lab 默认。
   requestRetry:
     enabled: true
     maxAttempts: 6
@@ -171,3 +170,5 @@ qualityGuard:
     # Single-account pools should set this lower; toggling enabled does not
     # clear cooldown — use POST /api/admin/v1/accounts/:id/clear-cooldown.
     idleAccountCooldown: 15m
+    minEncryptedBytes: 256
+    encryptedBytesPerReasoningToken: 4
