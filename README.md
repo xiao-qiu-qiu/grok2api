@@ -331,7 +331,7 @@ Web can be weakly linked one-to-one with matching Build and Console accounts. Li
 
 ### Codex, Claude Code, and prompt caching
 
-Responses and Messages support streaming, tools, reasoning, multi-turn sessions, and compaction. Stable client session signals are preserved for Grok Build prompt-cache affinity. Cache hits still require a compatible upstream account and an unchanged prompt prefix. A still-decryptable compaction summary from this gateway instance is expanded even if the session or PromptCacheKey remaps; foreign or undecodable blobs remain a compatibility boundary.
+Responses and Messages support streaming, tools, reasoning, multi-turn sessions, and compaction. Stable client session signals are preserved for Grok Build prompt-cache affinity. Cache hits still require a compatible upstream account and an unchanged prompt prefix. A still-decryptable `g2a_compact_v1` summary from this gateway instance is expanded even if the session or PromptCacheKey remaps; an invalid prefixed blob is rejected with 400. Other compaction blobs keep their original `encrypted_content` when forwarded as upstream state, and any Build rejection is returned to the client.
 
 Responses and Chat Completions report OpenAI-style total input. Messages reports Anthropic-style uncached input and cache reads separately. Audits retain total and cached input for billing reconciliation.
 
@@ -413,7 +413,7 @@ qualityGuard:
     idleAccountCooldown: 15m
 ```
 
-`requestRetry` runs on the gateway request path and is independent of the sidecar. This fork enables it. A thinking-model stream with enough visible output and no streamed reasoning is **not delivered**; another account is tried. TUI follow-ups (`previous_response_id`) and hosted-tool turns stay held — the first attempt stays pinned, a withhold unpins and rotates. Image, video, and ForcedEgress probe requests are unchanged. If every attempt still has no reasoning, `onExhausted` either returns `503 quality_degraded` or delivers the last body.
+`requestRetry` runs on the gateway request path and is independent of the sidecar. This fork enables it. A thinking-model stream with enough visible output and no streamed reasoning is **not delivered**; replay-safe stateless requests may try another account. TUI follow-ups (`previous_response_id`) and hosted-tool turns are still held for classification, but a quality withhold never replays account-bound state or side-effecting tools across accounts. Context compaction, image, video, and ForcedEgress probe requests are unchanged. If every attempt still has no reasoning, `onExhausted` returns `503 quality_degraded` or releases the held body.
 
 ```bash
 docker compose up -d

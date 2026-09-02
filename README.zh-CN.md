@@ -330,7 +330,7 @@ Web 可与对应的 Build、Console 建立一对一弱关联。关联只共享�
 
 ### Codex、Claude Code 与 Prompt Cache
 
-Responses 与 Messages 支持流式、工具、推理、多轮会话和 compact。客户端会话信号会保持稳定，用于 Grok Build Prompt Cache 亲和；实际命中仍要求上游账号兼容且请求前缀未变化。同一网关实例内，仍可解密的 compact 摘要在 session / PromptCacheKey 漂移后也会展开；无法解密的外源 blob 仍视为兼容边界。
+Responses 与 Messages 支持流式、工具、推理、多轮会话和 compact。客户端会话信号会保持稳定，用于 Grok Build Prompt Cache 亲和；实际命中仍要求上游账号兼容且请求前缀未变化。同一网关实例内，仍可解密的 `g2a_compact_v1` 摘要在 session / PromptCacheKey 漂移后也会展开；带该前缀但无法解码的 blob 会返回 400。其他 compact blob 作为上游原始状态转发时会保留原始 `encrypted_content`；若 Build 拒绝，该错误会原样返回客户端。
 
 Responses 与 Chat Completions 按 OpenAI 语义报告输入总量；Messages 按 Anthropic 语义分开报告未缓存输入和缓存读取。审计保留输入总量与缓存部分，用于计费对账。
 
@@ -411,7 +411,7 @@ qualityGuard:
     idleAccountCooldown: 15m
 ```
 
-`requestRetry` 在网关请求路径上生效，与 sidecar 探测/隔离相互独立。本 fork 默认开启。可见输出达到 `minOutputTokens` 且全程无流式 reasoning 时**不发给用户**，排除该账号再试。TUI 续聊（`previous_response_id`）和 hosted tools 仍 hold：第一枪钉原账号，扣住后 unpin 换号。不处理图/视频和 ForcedEgress 探针。全部仍无推理则按 `onExhausted` 返回 `503 quality_degraded` 或放出最后一枪。
+`requestRetry` 在网关请求路径上生效，与 sidecar 探测/隔离相互独立。本 fork 默认开启。可见输出达到 `minOutputTokens` 且全程无流式 reasoning 时**不发给用户**；只有可安全重放的无状态请求才会排除账号重试。TUI 续聊（`previous_response_id`）和 hosted tools 仍会进入 hold 检测，但质量拦截不会把账号绑定状态或有副作用的工具跨账号重放。上下文压缩、图片、视频和 ForcedEgress 探针不受影响。全部仍无推理则按 `onExhausted` 返回 `503 quality_degraded` 或放出当前响应。
 
 ```bash
 docker compose up -d
