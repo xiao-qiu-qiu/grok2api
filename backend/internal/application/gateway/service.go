@@ -1038,6 +1038,7 @@ func (s *Service) createResponseAt(ctx context.Context, input Input, path string
 	// Count accounts that actually reached the upstream. Credential-only skips
 	// do not consume the quality retry budget; refreshes stay on the same account.
 	qualityAccountAttempts := 0
+	qualityHoldRemaining := holdCfg.TotalHoldTimeout
 	quotaMode := s.providers.QuotaMode(route.Provider, route.UpstreamModel)
 	quotaProbeAttempted := false
 	selection := preselectedSession
@@ -1209,7 +1210,7 @@ func (s *Service) createResponseAt(ctx context.Context, input Input, path string
 	}
 attemptLoop:
 	for attempt := 0; attemptPolicy.allows(attempt); attempt++ {
-		if qualityHoldEnabled && qualityAccountAttempts >= holdCfg.MaxAttempts {
+		if qualityHoldEnabled && (qualityAccountAttempts >= holdCfg.MaxAttempts || qualityHoldRemaining <= 0) {
 			break
 		}
 		var lease *accountLease
@@ -1576,8 +1577,23 @@ attemptLoop:
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
 			s.selector.markSuccess(ctx, credential, lease.QuotaProbe)
 			if qualityHoldEnabled {
-				replay, verdict, peekUsage, _, peekErr := peekQualityStream(ctx, response.Body, qualityProtocolForOperation(operation), holdCfg)
+				peekCfg := holdCfg
+				peekCfg.HoldTimeout = min(holdCfg.HoldTimeout, qualityHoldRemaining)
+				peekStarted := time.Now()
+				observation := &qualityPeekObservation{}
+				replay, verdict, peekUsage, _, peekErr := peekQualityStream(ctx, response.Body, qualityProtocolForOperation(operation), peekCfg, observation)
+				heldFor := time.Since(peekStarted)
+				qualityHoldRemaining -= heldFor
+				peekOutcome := string(verdict)
 				if peekErr != nil {
+					peekOutcome = "error"
+				}
+				s.logger.Info("quality_stream_checked", "request_id", input.RequestID, "account_id", credential.ID,
+					"hold_ms", heldFor.Milliseconds(), "remaining_hold_ms", max(int64(0), qualityHoldRemaining.Milliseconds()),
+					"first_byte_ms", observation.firstByteMS, "first_thinking_ms", observation.firstThinkingMS,
+					"first_visible_ms", observation.firstVisibleMS, "verdict", peekOutcome)
+				if peekErr != nil {
+					failureAttempts.captureQualityPeekFailure(credential, responseStartedAt, response, peekErr)
 					if replay != nil {
 						_ = replay.Close()
 					} else {
@@ -1590,6 +1606,18 @@ attemptLoop:
 						break
 					}
 					lastFailure = newTransportUpstreamFailure(peekErr, credential.ID, credential.Name)
+					if errors.Is(peekErr, errQualityHoldTimeout) {
+						// A bounded observation expired. Slow thinking is not proof
+						// of a broken account: do not quarantine or disable it.
+						lastFailure = &UpstreamFailure{HTTPStatus: http.StatusGatewayTimeout, Code: "quality_hold_timeout",
+							PublicMessage: "质量检查等待超时，请稍后重试", AccountID: credential.ID, AccountName: credential.Name, Cause: peekErr}
+						s.logger.Warn("quality_hold_timeout", "request_id", input.RequestID, "account_id", credential.ID,
+							"hold_ms", heldFor.Milliseconds(), "quality_attempt", qualityAccountAttempts)
+						if !qualityCrossAccountReplay || qualityHoldRemaining <= 0 {
+							break attemptLoop
+						}
+						continue
+					}
 					if neterrorpkg.IsUpstreamStreamIdleTimeout(peekErr) || neterrorpkg.IsUpstreamStreamIdleTimeout(context.Cause(ctx)) || errors.Is(peekErr, errQualityEmptyStream) {
 						logPrefix := "quality_peek_idle"
 						if errors.Is(peekErr, errQualityEmptyStream) {
@@ -1609,7 +1637,7 @@ attemptLoop:
 					continue
 				}
 				response.Body = replay
-				hasNextAccount := qualityCrossAccountReplay && attemptPolicy.hasNext(attempt) && qualityAccountAttempts < holdCfg.MaxAttempts
+				hasNextAccount := qualityCrossAccountReplay && attemptPolicy.hasNext(attempt) && qualityAccountAttempts < holdCfg.MaxAttempts && qualityHoldRemaining > 0
 				if hasNextAccount {
 					hasNextAccount = selection != nil && selection.hasAvailableCandidate(excluded, !quotaProbeAttempted)
 				}

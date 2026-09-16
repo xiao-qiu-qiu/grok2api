@@ -38,7 +38,7 @@ https://github.com/lij768423-svg/grok2api/blob/main/AI_GROK2API_INSTALL.md
 不要 pull ghcr.io/chenyme/grok2api:latest，必须 clone 本 fork 再 docker compose up -d --build。
 
 这个 fork 开箱即用：官方最新 + 缺思考拦截默认开。
-- hold 30s / minOutput 8 / 6 枪 / fail_closed
+- 单次 hold 硬上限 30s / 累计 hold 45s / minOutput 8 / 最多 6 次 / fail_closed
 - 短 encrypted_content stub 不算思考；floor = max(256B, reasoning_tokens×4)
 - hold 到期后的短问候 + 高 reasoning（「你好」）继续扣
 - 缺思考冷却 12h，空流 15m；docker compose up -d 带 sidecar
@@ -404,11 +404,12 @@ qualityGuard:
   model: "grok-4.6"
   # 思考模型缺流式 reasoning 时先扣住响应，换号再打，不把降智正文发给用户。
   # 最多观察 30 秒；stub 加上足够可见输出在超时后扣住（TUI 30s 后的短问候），
-  # 空 stub 继续等。floor 已达标但 1 秒内吐短回复的也扣。
+  # 空 stub 到期按检查超时处理。floor 已达标但 1 秒内吐短回复的也扣。
   requestRetry:
     enabled: true
     maxAttempts: 6
     holdTimeout: 30s
+    totalHoldTimeout: 45s
     minOutputTokens: 8
     onExhausted: fail_closed # fail_open | fail_closed
     accountCooldown: 12h
@@ -416,6 +417,12 @@ qualityGuard:
 ```
 
 `requestRetry` 在网关请求路径上生效，与 sidecar 探测/隔离相互独立。本 fork 默认开启。可见输出达到 `minOutputTokens` 且全程无流式 reasoning 时**不发给用户**；只有可安全重放的无状态请求才会排除账号重试。TUI 续聊（`previous_response_id`）和 hosted tools 仍会进入 hold 检测，但质量拦截不会把账号绑定状态或有副作用的工具跨账号重放。上下文压缩、图片、视频和 ForcedEgress 探针不受影响。全部仍无推理则按 `onExhausted` 返回 `503 quality_degraded` 或放出当前响应。
+
+质量预读具有两个硬边界：`holdTimeout` 默认每次 30 秒，`totalHoldTimeout` 默认跨账号累计 45 秒。两者只统计质量预读时间，不包括连接/响应头等待或放流后的生成时间。到期仍缺少足够证据时关闭当前流；可安全重放的请求在剩余预算内换账号，耗尽后返回 `504 quality_hold_timeout`（已有 `fail_open` 回退响应时沿用回退）。检查超时不处罚慢账号；真实空流/idle 仍按原规则处理。
+
+可读推理增量依旧立即放行。密文达到至少两倍 floor（按至少 256B 计算）、可见输出至少约 32 token，且实际可见增量跨度达到 1 秒时，也可在最终 usage 到来前放流。这样用部分末尾质量确定性换取正常长回复的较低首字延迟；短回复、突发输出和缺少推理证据的检查继续保留。
+
+日志 `quality_stream_checked` 记录本次预读耗时，以及首个字节、思考证据、可见输出相对于预读开始的到达时间，不记录正文。空流、idle 和检查超时也写入审计的 `quality_peek` 条目；审计 `attempt_count` 仍代表诊断条目数，不等同于实际物理调用次数。
 
 ```bash
 docker compose up -d

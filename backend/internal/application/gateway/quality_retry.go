@@ -23,6 +23,7 @@ const (
 	qualityRetryFailClosed                 = "fail_closed"
 	defaultQualityMaxAttempts              = 6
 	defaultQualityHoldTimeout              = 30 * time.Second
+	defaultQualityTotalHoldTimeout         = 45 * time.Second
 	defaultQualityMinOutput                = int64(8)
 	defaultMinEncryptedBytes               = 256
 	defaultEncryptedBytesPerReasoningToken = 4
@@ -40,17 +41,21 @@ const (
 var (
 	errQualityDegraded    = errors.New("上游响应缺少推理")
 	errQualityEmptyStream = errors.New("上游流式响应为空")
+	errQualityHoldTimeout = errors.New("质量检查等待超时")
 )
 
 // QualityRetryRuntime is the isolated request-path withhold/retry policy.
 // Zero Enabled leaves production behavior unchanged.
 type QualityRetryRuntime struct {
-	Enabled         bool
-	MaxAttempts     int
-	HoldTimeout     time.Duration
-	MinOutputTokens int64
-	OnExhausted     string
-	AccountCooldown time.Duration
+	Enabled     bool
+	MaxAttempts int
+	HoldTimeout time.Duration
+	// TotalHoldTimeout caps cumulative pre-read time across account retries.
+	// Upstream header waits and downstream generation use their own timeouts.
+	TotalHoldTimeout time.Duration
+	MinOutputTokens  int64
+	OnExhausted      string
+	AccountCooldown  time.Duration
 	// IdleAccountCooldown is applied to truly empty upstream streams
 	// (idle timeout / empty peek). Missing-thinking still uses AccountCooldown.
 	IdleAccountCooldown             time.Duration
@@ -75,6 +80,7 @@ type QualityStreamSignals struct {
 	UsageReported    bool
 	FirstVisible     bool
 	VisibleFlushMS   int64
+	VisibleSpanMS    int64
 	Terminal         bool
 	HoldExpired      bool
 }
@@ -104,6 +110,9 @@ func normalizeQualityRetry(cfg QualityRetryRuntime) QualityRetryRuntime {
 	}
 	if cfg.HoldTimeout <= 0 {
 		cfg.HoldTimeout = defaultQualityHoldTimeout
+	}
+	if cfg.TotalHoldTimeout <= 0 {
+		cfg.TotalHoldTimeout = defaultQualityTotalHoldTimeout
 	}
 	if cfg.MinOutputTokens <= 0 {
 		cfg.MinOutputTokens = defaultQualityMinOutput
@@ -198,13 +207,13 @@ func qualityIsBurstDump(sig QualityStreamSignals, minOutput int64) bool {
 // degraded upstreams fill that field without ciphertext or deltas. A finished
 // sample with enough visible output and no streamed thinking is withheld.
 // Short replies below minOutput are delivered so "ok"/"yes" is not retried.
-// A hold timeout with no visible output is not fail-open: keep waiting for
-// more bytes or a stream abort so an empty hang is not flushed as HTTP 200.
+// An inconclusive hold at the deadline is a timeout, not proof of degradation
+// and not permission to flush an empty HTTP 200. The pre-reader closes it.
 //
 // An empty reasoning stub is not thinking. Before the hold deadline, wait for
 // real evidence or a terminal event. A stub plus enough visible output at the
 // deadline is withheld — that is the TUI dump after 30s, not late ciphertext.
-// Stub-only empty streams keep waiting for idle/terminal handling.
+// Stub-only empty streams are bounded by the pre-reader's hold deadline.
 // HasThinking that is only a thin ciphertext dump after the hold (or a
 // barely-over-floor flush in <1s) is still withheld.
 func ClassifyQualityHold(sig QualityStreamSignals, minOutput int64) QualityVerdict {
@@ -228,8 +237,15 @@ func ClassifyQualityHold(sig QualityStreamSignals, minOutput int64) QualityVerdi
 			}
 			return QualityWait
 		}
-		// The token-relative floor cannot be final until usage arrives. Preserve
-		// HoldTimeout as the fail-open latency bound for still-open streams.
+		// Strong ciphertext plus sustained visible output is enough to start
+		// delivery without waiting for end-of-stream usage. Keep short/burst
+		// samples provisional; usage-only reasoning remains untrusted.
+		if sig.FirstVisible && sig.VisibleTokens >= defaultBurstMaxVisible &&
+			sig.VisibleSpanMS >= defaultBurstFlushMS &&
+			int64(sig.EncryptedBytes)/2 >= max(int64(defaultMinEncryptedBytes), sig.EncryptedFloor) {
+			return QualityDeliver
+		}
+		// Other ciphertext-only samples wait for usage or the hold deadline.
 		if !sig.Terminal && !sig.HoldExpired && !sig.UsageReported {
 			return QualityWait
 		}

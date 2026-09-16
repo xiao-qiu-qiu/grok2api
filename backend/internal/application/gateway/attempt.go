@@ -152,6 +152,23 @@ func (r *failureAttemptRecorder) captureResponse(credential accountdomain.Creden
 	return nil
 }
 
+// Quality pre-read failures happen before the response is handed to the HTTP
+// streamer. Record metadata only: the held stream may contain private content.
+func (r *failureAttemptRecorder) captureQualityPeekFailure(credential accountdomain.Credential, startedAt time.Time, response *provider.Response, err error) {
+	if response == nil || err == nil {
+		return
+	}
+	statusCode := response.StatusCode
+	r.append(audit.Attempt{
+		Source: audit.AttemptSourceUpstreamHTTP, Stage: "quality_peek",
+		AccountID: auditAccountID(credential.ID), AccountName: credential.Name,
+		Method: r.method, RequestPath: r.path, UpstreamURL: sanitizeUpstreamURL(response.UpstreamURL),
+		StartedAt: startedAt.UTC(), DurationMS: time.Since(startedAt).Milliseconds(),
+		UpstreamStatusCode: &statusCode, UpstreamStatus: response.Status,
+		TransportError: sanitizeDiagnosticText(err.Error(), diagnosticTextLimit), ErrorChain: errorFrames(err),
+	})
+}
+
 func (r *failureAttemptRecorder) captureStreamFailure(credential accountdomain.Credential, startedAt time.Time, response *provider.Response, diagnostic StreamFailureDiagnostic) {
 	if response == nil {
 		return

@@ -290,12 +290,13 @@ type QualityGuardConfig struct {
 
 // QualityGuardRequestRetryConfig holds the in-process missing-thinking withhold policy.
 type QualityGuardRequestRetryConfig struct {
-	Enabled         bool     `yaml:"enabled"`
-	MaxAttempts     int      `yaml:"maxAttempts"`
-	HoldTimeout     Duration `yaml:"holdTimeout"`
-	MinOutputTokens int      `yaml:"minOutputTokens"`
-	OnExhausted     string   `yaml:"onExhausted"`
-	AccountCooldown Duration `yaml:"accountCooldown"`
+	Enabled          bool     `yaml:"enabled"`
+	MaxAttempts      int      `yaml:"maxAttempts"`
+	HoldTimeout      Duration `yaml:"holdTimeout"`
+	TotalHoldTimeout Duration `yaml:"totalHoldTimeout"`
+	MinOutputTokens  int      `yaml:"minOutputTokens"`
+	OnExhausted      string   `yaml:"onExhausted"`
+	AccountCooldown  Duration `yaml:"accountCooldown"`
 	// IdleAccountCooldown cools an account after a truly empty upstream
 	// stream. Independent of accountCooldown (missing-thinking). Zero uses 15m.
 	IdleAccountCooldown             Duration `yaml:"idleAccountCooldown"`
@@ -801,6 +802,9 @@ func validateQualityGuardRequestRetry(value QualityGuardRequestRetryConfig) erro
 	if d := value.HoldTimeout.Value(); d != 0 && (d < 200*time.Millisecond || d > 30*time.Second) {
 		return errors.New("qualityGuard.requestRetry.holdTimeout 必须在 200ms 到 30s 之间")
 	}
+	if d := value.TotalHoldTimeout.Value(); d != 0 && (d < 200*time.Millisecond || d > 3*time.Minute) {
+		return errors.New("qualityGuard.requestRetry.totalHoldTimeout 必须在 200ms 到 3m 之间")
+	}
 	if value.MinOutputTokens != 0 && (value.MinOutputTokens < 8 || value.MinOutputTokens > 256) {
 		return errors.New("qualityGuard.requestRetry.minOutputTokens 必须在 8 到 256 之间")
 	}
@@ -956,7 +960,7 @@ func defaultConfig() Config {
 			MinimumGenerationWindow: Duration(time.Second), RotationTimeout: Duration(45 * time.Second),
 			RequestRetry: QualityGuardRequestRetryConfig{
 				Enabled:     true,
-				MaxAttempts: 6, HoldTimeout: Duration(30 * time.Second), MinOutputTokens: 8, OnExhausted: "fail_closed",
+				MaxAttempts: 6, HoldTimeout: Duration(30 * time.Second), TotalHoldTimeout: Duration(45 * time.Second), MinOutputTokens: 8, OnExhausted: "fail_closed",
 				AccountCooldown: Duration(12 * time.Hour), IdleAccountCooldown: Duration(15 * time.Minute),
 				MinEncryptedBytes: 256, EncryptedBytesPerReasoningToken: 4,
 			},

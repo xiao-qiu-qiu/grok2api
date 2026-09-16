@@ -41,6 +41,7 @@ type qualityScanState struct {
 	terminal                        bool
 	holdExpired                     bool
 	firstVisibleAt                  time.Time
+	lastVisibleAt                   time.Time
 }
 
 type qualityReadResult struct {
@@ -172,6 +173,7 @@ func (s *qualityScanState) signals() QualityStreamSignals {
 		UsageReported:     s.usage.Reported,
 		FirstVisible:      firstVisible,
 		VisibleFlushMS:    flushMS,
+		VisibleSpanMS:     max(int64(0), s.lastVisibleAt.Sub(s.firstVisibleAt).Milliseconds()),
 		Terminal:          s.terminal,
 		HoldExpired:       s.holdExpired,
 	}
@@ -494,11 +496,21 @@ func noteVisibleContent(state *qualityScanState, text string) {
 	if state.firstVisibleAt.IsZero() {
 		state.firstVisibleAt = time.Now()
 	}
+	state.lastVisibleAt = time.Now()
 	state.visibleRunes += utf8.RuneCountInString(text)
 }
 
-func peekQualityStream(ctx context.Context, body io.ReadCloser, protocol string, cfg QualityRetryRuntime) (io.ReadCloser, QualityVerdict, Usage, string, error) {
+// Timings are relative to pre-read start, not the whole request. Nil means the
+// signal was never observed; no stream contents are retained for diagnostics.
+type qualityPeekObservation struct {
+	firstByteMS     *int64
+	firstThinkingMS *int64
+	firstVisibleMS  *int64
+}
+
+func peekQualityStream(ctx context.Context, body io.ReadCloser, protocol string, cfg QualityRetryRuntime, observations ...*qualityPeekObservation) (io.ReadCloser, QualityVerdict, Usage, string, error) {
 	cfg = normalizeQualityRetry(cfg)
+	started := time.Now()
 	if body == nil {
 		return io.NopCloser(bytes.NewReader(nil)), QualityWait, Usage{}, "", errQualityEmptyStream
 	}
@@ -509,10 +521,20 @@ func peekQualityStream(ctx context.Context, body io.ReadCloser, protocol string,
 		encryptedBytesPerReasoningToken: cfg.EncryptedBytesPerReasoningToken,
 	}
 	var held bytes.Buffer
-	holdTimer := time.NewTimer(cfg.HoldTimeout)
+	deadline := started.Add(cfg.HoldTimeout)
+	holdTimer := time.NewTimer(time.Until(deadline))
 	defer holdTimer.Stop()
 	for {
+		// Check cancellation even when the source keeps producing chunks.
+		if ctx.Err() != nil {
+			_ = pump.Close()
+			return nil, QualityWait, state.usage, state.responseID, qualityPeekAbortError(ctx, ctx.Err())
+		}
 		sig := state.signals()
+		if !time.Now().Before(deadline) {
+			state.holdExpired = true
+			sig.HoldExpired = true
+		}
 		if verdict := ClassifyQualityHold(sig, cfg.MinOutputTokens); verdict != QualityWait {
 			return newPrefixReplay(&held, pump), verdict, state.usage, state.responseID, nil
 		}
@@ -522,6 +544,10 @@ func peekQualityStream(ctx context.Context, body io.ReadCloser, protocol string,
 		if sig.Terminal {
 			return finishQualityPeek(&held, pump, &state, cfg)
 		}
+		if sig.HoldExpired {
+			_ = pump.Close()
+			return nil, QualityWait, state.usage, state.responseID, errQualityHoldTimeout
+		}
 
 		select {
 		case <-ctx.Done():
@@ -529,10 +555,7 @@ func peekQualityStream(ctx context.Context, body io.ReadCloser, protocol string,
 			return io.NopCloser(bytes.NewReader(held.Bytes())), QualityWait, state.usage, state.responseID, qualityPeekAbortError(ctx, ctx.Err())
 		case <-holdTimer.C:
 			state.holdExpired = true
-			sig.HoldExpired = true
-			if verdict := ClassifyQualityHold(sig, cfg.MinOutputTokens); verdict != QualityWait {
-				return newPrefixReplay(&held, pump), verdict, state.usage, state.responseID, nil
-			}
+			// Reclassify with fresh elapsed timings at the top of the loop.
 		case result, ok := <-pump.results:
 			if !ok {
 				return finishQualityPeek(&held, pump, &state, cfg)
@@ -544,6 +567,21 @@ func peekQualityStream(ctx context.Context, body io.ReadCloser, protocol string,
 				}
 				_, _ = held.Write(result.data)
 				ObserveQualityChunk(&state, result.data)
+				for _, observation := range observations {
+					if observation == nil {
+						continue
+					}
+					elapsed := time.Since(started).Milliseconds()
+					if observation.firstByteMS == nil {
+						observation.firstByteMS = &elapsed
+					}
+					if observation.firstThinkingMS == nil && state.signals().HasThinking {
+						observation.firstThinkingMS = &elapsed
+					}
+					if observation.firstVisibleMS == nil && !state.firstVisibleAt.IsZero() {
+						observation.firstVisibleMS = &elapsed
+					}
+				}
 			}
 			if result.err == io.EOF {
 				return finishQualityPeek(&held, pump, &state, cfg)

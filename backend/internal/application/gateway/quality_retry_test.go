@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -916,78 +917,91 @@ func TestPeekQualityStreamHoldTimeoutDeliversStartedReasoningAndPreservesLateEvi
 
 func TestPeekQualityStreamHoldTimeoutEmptyDoesNotFailOpen(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithCancelCause(context.Background())
 	reader, writer := io.Pipe()
+	source := &qualityTrackedReadCloser{ReadCloser: reader, closed: make(chan struct{})}
 	defer writer.Close()
-	done := make(chan struct{})
-	var verdict QualityVerdict
-	var peekErr error
+	defer source.Close()
+	done := make(chan qualityOpenPeekResult, 1)
 	go func() {
-		defer close(done)
-		_, verdict, _, _, peekErr = peekQualityStream(ctx, reader, qualityProtocolChat, QualityRetryRuntime{
+		replay, verdict, _, _, peekErr := peekQualityStream(context.Background(), source, qualityProtocolChat, QualityRetryRuntime{
 			MinOutputTokens: 32,
 			HoldTimeout:     20 * time.Millisecond,
 		})
+		done <- qualityOpenPeekResult{replay: replay, verdict: verdict, err: peekErr}
 	}()
 	select {
-	case <-done:
-		t.Fatal("empty hold timeout must keep reading, not fail-open")
-	case <-time.After(50 * time.Millisecond):
-	}
-	cancel(neterrorpkg.ErrUpstreamStreamIdleTimeout)
-	select {
-	case <-done:
+	case result := <-done:
+		if result.replay != nil {
+			_ = result.replay.Close()
+		}
+		if !errors.Is(result.err, errQualityHoldTimeout) {
+			t.Fatalf("peek error = %v, want quality hold timeout", result.err)
+		}
+		if result.verdict != QualityWait {
+			t.Fatalf("verdict=%s, want wait", result.verdict)
+		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("peekQualityStream did not return after idle cancel")
+		t.Fatal("peekQualityStream did not stop at the hard hold timeout")
 	}
-	if !neterrorpkg.IsUpstreamStreamIdleTimeout(peekErr) {
-		t.Fatalf("peekErr = %v, want idle timeout", peekErr)
-	}
-	if verdict != QualityWait {
-		t.Fatalf("verdict=%s, want wait so the loop does not fail-open", verdict)
+	select {
+	case <-source.closed:
+	case <-time.After(time.Second):
+		t.Fatal("quality hold timeout did not close the upstream source")
 	}
 }
 
 func TestPeekQualityStreamHoldTimeoutStubOnlyDoesNotFailOpen(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithCancelCause(context.Background())
 	reader, writer := io.Pipe()
+	source := &qualityTrackedReadCloser{ReadCloser: reader, closed: make(chan struct{})}
 	defer writer.Close()
+	defer source.Close()
 	writeDone := make(chan error, 1)
 	go func() {
 		_, err := io.WriteString(writer, sse(": grok2api-reasoning-start"))
 		writeDone <- err
 	}()
-	done := make(chan struct{})
-	var verdict QualityVerdict
-	var peekErr error
+	done := make(chan qualityOpenPeekResult, 1)
 	go func() {
-		defer close(done)
-		_, verdict, _, _, peekErr = peekQualityStream(ctx, reader, qualityProtocolChat, QualityRetryRuntime{
+		replay, verdict, _, _, peekErr := peekQualityStream(context.Background(), source, qualityProtocolChat, QualityRetryRuntime{
 			MinOutputTokens: 8,
 			HoldTimeout:     20 * time.Millisecond,
 		})
+		done <- qualityOpenPeekResult{replay: replay, verdict: verdict, err: peekErr}
 	}()
 	if err := <-writeDone; err != nil {
 		t.Fatal(err)
 	}
 	select {
-	case <-done:
-		t.Fatal("stub-only hold timeout must keep reading, not release an empty stream")
-	case <-time.After(50 * time.Millisecond):
-	}
-	cancel(neterrorpkg.ErrUpstreamStreamIdleTimeout)
-	select {
-	case <-done:
+	case result := <-done:
+		if result.replay != nil {
+			_ = result.replay.Close()
+		}
+		if !errors.Is(result.err, errQualityHoldTimeout) {
+			t.Fatalf("peek error = %v, want quality hold timeout", result.err)
+		}
+		if result.verdict != QualityWait {
+			t.Fatalf("verdict=%s, want wait", result.verdict)
+		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("peekQualityStream did not return after stub-only idle cancel")
+		t.Fatal("peekQualityStream did not stop at the hard hold timeout")
 	}
-	if !neterrorpkg.IsUpstreamStreamIdleTimeout(peekErr) {
-		t.Fatalf("peekErr = %v, want idle timeout", peekErr)
+	select {
+	case <-source.closed:
+	case <-time.After(time.Second):
+		t.Fatal("quality hold timeout did not close the upstream source")
 	}
-	if verdict != QualityWait {
-		t.Fatalf("verdict=%s, want wait so the loop retries as transport", verdict)
-	}
+}
+
+type qualityTrackedReadCloser struct {
+	io.ReadCloser
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (r *qualityTrackedReadCloser) Close() error {
+	r.once.Do(func() { close(r.closed) })
+	return r.ReadCloser.Close()
 }
 
 type qualityOpenPeekResult struct {
@@ -1833,10 +1847,240 @@ func TestAttemptLoopQualityFailOpenFallbackAndTotalAttemptCap(t *testing.T) {
 	}
 }
 
+type qualityBlockingBody struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newQualityBlockingBody() *qualityBlockingBody {
+	return &qualityBlockingBody{closed: make(chan struct{})}
+}
+
+func (b *qualityBlockingBody) Read([]byte) (int, error) {
+	<-b.closed
+	return 0, io.ErrClosedPipe
+}
+
+func (b *qualityBlockingBody) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
+}
+
+type qualityTimeoutAdapter struct {
+	*scriptedBuildAdapter
+	timeoutIDs map[uint64]bool
+}
+
+func (a *qualityTimeoutAdapter) ForwardResponse(_ context.Context, request provider.ResponseResourceRequest) (*provider.Response, error) {
+	if a.timeoutIDs[request.Credential.ID] {
+		a.mu.Lock()
+		a.attempts = append(a.attempts, request.Credential.ID)
+		a.mu.Unlock()
+		return &provider.Response{
+			StatusCode:  http.StatusOK,
+			Status:      "200 OK",
+			Header:      http.Header{"Content-Type": {"text/event-stream"}},
+			UpstreamURL: "https://quality.test/v1/chat/completions",
+			Body:        newQualityBlockingBody(),
+		}, nil
+	}
+	return a.scriptedBuildAdapter.ForwardResponse(context.Background(), request)
+}
+
+type qualityRetryServiceFixture struct {
+	ctx          context.Context
+	database     *relational.Database
+	accountRepo  *relational.AccountRepository
+	modelRepo    *relational.ModelRepository
+	auditRepo    *relational.AuditRepository
+	responseRepo *relational.ResponseRepository
+	service      *Service
+	credentials  []accountdomain.Credential
+	clientKey    clientkey.Key
+}
+
+func newQualityRetryServiceFixture(t *testing.T, adapter provider.Adapter, names []string, model string, routingAttempts int) *qualityRetryServiceFixture {
+	t.Helper()
+	ctx := context.Background()
+	database, err := relational.OpenSQLite(ctx, filepath.Join(t.TempDir(), "quality-budget.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := database.InitializeSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	accountRepo := relational.NewAccountRepository(database)
+	modelRepo := relational.NewModelRepository(database)
+	auditRepo := relational.NewAuditRepository(database)
+	responseRepo := relational.NewResponseRepository(database)
+	keyRepo := relational.NewClientKeyRepository(database)
+	credentials := make([]accountdomain.Credential, 0, len(names))
+	for index, name := range names {
+		credential, _, createErr := accountRepo.UpsertByIdentity(ctx, accountdomain.Credential{
+			Provider: accountdomain.ProviderBuild, Name: name, SourceKey: name,
+			EncryptedAccessToken: name, EncryptedRefreshToken: "refresh-" + name,
+			ExpiresAt: time.Now().Add(time.Hour), Enabled: true,
+			AuthStatus: accountdomain.AuthStatusActive, Priority: 300 - index, MaxConcurrent: 1,
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		credentials = append(credentials, credential)
+	}
+	if err := modelRepo.UpsertDiscovered(ctx, accountdomain.ProviderBuild, []string{model}); err != nil {
+		t.Fatal(err)
+	}
+	for _, credential := range credentials {
+		if err := modelRepo.ReplaceAccountCapabilities(ctx, credential.ID, []string{model}, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clientKey, err := keyRepo.Create(ctx, clientkey.Key{
+		Name: "quality-budget-key", Prefix: "qbudget", SecretHash: strings.Repeat("8", 64),
+		EncryptedSecret: "encrypted", Enabled: true, RPMLimit: 120, MaxConcurrent: 8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := provider.NewRegistry(adapter)
+	sticky := memory.NewStickyStore()
+	accountService := accountapp.NewService(accountRepo, auditRepo, memory.NewDeviceSessionStore(), sticky, registry, testCipher(t), nil)
+	selector := NewSelector(accountRepo, memory.NewConcurrencyLimiter(), sticky, registry, time.Hour, time.Second, time.Minute)
+	service := NewService(modelRepo, auditRepo, accountService, clientkeyapp.NewService(nil, nil, nil, 60, 4, nil), registry, selector, responseRepo, routingAttempts)
+	return &qualityRetryServiceFixture{
+		ctx: ctx, database: database, accountRepo: accountRepo, modelRepo: modelRepo,
+		auditRepo: auditRepo, responseRepo: responseRepo, service: service, credentials: credentials, clientKey: clientKey,
+	}
+}
+
+func qualityAuditDetailForRequest(t *testing.T, fixture *qualityRetryServiceFixture, requestID string) audit.Record {
+	t.Helper()
+	logs, _, err := fixture.auditRepo.List(fixture.ctx, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range logs {
+		if record.RequestID != requestID {
+			continue
+		}
+		detail, getErr := fixture.auditRepo.Get(fixture.ctx, record.ID)
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		return detail
+	}
+	t.Fatalf("audit record %q not found in %#v", requestID, logs)
+	return audit.Record{}
+}
+
+func TestAttemptLoopQualityHoldTimeoutUsesTotalBudgetWithoutCoolingAccounts(t *testing.T) {
+	base := &scriptedBuildAdapter{responses: make(map[uint64][]scriptedBuildResponse)}
+	adapter := &qualityTimeoutAdapter{scriptedBuildAdapter: base, timeoutIDs: make(map[uint64]bool)}
+	fixture := newQualityRetryServiceFixture(t, adapter, []string{"slow-a", "slow-b", "slow-c"}, "grok-4.6", 999)
+	for _, credential := range fixture.credentials {
+		adapter.timeoutIDs[credential.ID] = true
+	}
+	fixture.service.UpdateQualityRetry(QualityRetryRuntime{
+		Enabled: true, MaxAttempts: 6, MinOutputTokens: 8, OnExhausted: qualityRetryFailClosed,
+		HoldTimeout: 25 * time.Millisecond, TotalHoldTimeout: 45 * time.Millisecond,
+	})
+
+	result, err := fixture.service.CreateChatCompletion(fixture.ctx, Input{
+		RequestID: "req-quality-budget", ClientKey: fixture.clientKey, PublicModel: "grok-4.6",
+		Streaming: true, Body: []byte(`{"model":"grok-4.6","messages":[{"role":"user","content":"slow"}],"stream":true}`),
+	})
+	if result != nil {
+		_ = result.Body.Close()
+	}
+	var failure *UpstreamFailure
+	if !errors.As(err, &failure) {
+		t.Fatalf("error = %T %v, want UpstreamFailure", err, err)
+	}
+	if failure.HTTPStatus != http.StatusGatewayTimeout || failure.Code != "quality_hold_timeout" {
+		t.Fatalf("failure = %#v, want 504 quality_hold_timeout", failure)
+	}
+	if attempts := adapter.Attempts(); len(attempts) != 2 || attempts[0] != fixture.credentials[0].ID || attempts[1] != fixture.credentials[1].ID {
+		t.Fatalf("total hold budget must stop before the third account, attempts=%#v", attempts)
+	}
+	for _, credential := range fixture.credentials {
+		current, getErr := fixture.accountRepo.Get(fixture.ctx, credential.ID)
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if current.FailureCount != 0 || current.CooldownUntil != nil || current.LastError != "" {
+			t.Fatalf("quality timeout must not penalize slow account %d: %#v", credential.ID, current)
+		}
+	}
+	detail := qualityAuditDetailForRequest(t, fixture, "req-quality-budget")
+	if detail.StatusCode != http.StatusGatewayTimeout || detail.ErrorCode != "quality_hold_timeout" {
+		t.Fatalf("quality timeout audit = %#v", detail)
+	}
+	if len(detail.Attempts) != 2 {
+		t.Fatalf("quality timeout attempts = %#v", detail.Attempts)
+	}
+	for _, attempt := range detail.Attempts {
+		if attempt.Stage != "quality_peek" || attempt.UpstreamStatusCode == nil || *attempt.UpstreamStatusCode != http.StatusOK || !strings.Contains(attempt.TransportError, "质量检查等待超时") {
+			t.Fatalf("quality timeout attempt = %#v", attempt)
+		}
+	}
+}
+
+func TestAttemptLoopQualityEmptyStreamRetriesAndRecordsPeekAttempt(t *testing.T) {
+	adapter := &scriptedBuildAdapter{responses: make(map[uint64][]scriptedBuildResponse)}
+	fixture := newQualityRetryServiceFixture(t, adapter, []string{"empty-first", "thinking-second"}, "grok-4.6", 3)
+	empty := sse("data: [DONE]")
+	thinking := sse(
+		`data: {"choices":[{"delta":{"thinking_content":"plan"}}]}`,
+		`data: {"choices":[{"delta":{"content":"answer after empty retry"}}]}`,
+		`data: {"usage":{"completion_tokens":20,"completion_tokens_details":{"reasoning_tokens":10}}}`,
+		"data: [DONE]",
+	)
+	adapter.responses[fixture.credentials[0].ID] = []scriptedBuildResponse{{status: http.StatusOK, body: empty}}
+	adapter.responses[fixture.credentials[1].ID] = []scriptedBuildResponse{{status: http.StatusOK, body: thinking}}
+	fixture.service.UpdateQualityRetry(QualityRetryRuntime{
+		Enabled: true, MaxAttempts: 2, MinOutputTokens: 8, OnExhausted: qualityRetryFailClosed,
+		HoldTimeout: time.Second, TotalHoldTimeout: 3 * time.Second,
+	})
+
+	result, err := fixture.service.CreateChatCompletion(fixture.ctx, Input{
+		RequestID: "req-quality-empty", ClientKey: fixture.clientKey, PublicModel: "grok-4.6",
+		Streaming: true, Body: []byte(`{"model":"grok-4.6","messages":[{"role":"user","content":"retry"}],"stream":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, readErr := io.ReadAll(result.Body)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	result.Finalize(Usage{Reported: true, OutputTokens: 20, ReasoningTokens: 10}, "quality-empty-ok", "")
+	_ = result.Body.Close()
+	if !strings.Contains(string(body), "answer after empty retry") {
+		t.Fatalf("successful retry body = %q", body)
+	}
+	if attempts := adapter.Attempts(); len(attempts) != 2 || attempts[0] != fixture.credentials[0].ID || attempts[1] != fixture.credentials[1].ID {
+		t.Fatalf("empty stream must retry the next account, attempts=%#v", attempts)
+	}
+	detail := qualityAuditDetailForRequest(t, fixture, "req-quality-empty")
+	if detail.StatusCode != http.StatusOK || detail.ErrorCode != "" {
+		t.Fatalf("successful retry audit = %#v", detail)
+	}
+	var emptyAttempt bool
+	for _, attempt := range detail.Attempts {
+		if attempt.Stage == "quality_peek" && attempt.UpstreamStatusCode != nil && *attempt.UpstreamStatusCode == http.StatusOK && strings.Contains(attempt.TransportError, "上游流式响应为空") {
+			emptyAttempt = true
+		}
+	}
+	if !emptyAttempt {
+		t.Fatalf("successful retry audit omitted empty quality peek attempt: %#v", detail.Attempts)
+	}
+}
+
 func TestNormalizeQualityRetryDefaults(t *testing.T) {
 	t.Parallel()
 	got := normalizeQualityRetry(QualityRetryRuntime{Enabled: true})
-	if !got.Enabled || got.MaxAttempts != 6 || got.MinOutputTokens != 8 || got.OnExhausted != qualityRetryFailClosed || got.HoldTimeout != 30*time.Second || got.AccountCooldown != 12*time.Hour || got.IdleAccountCooldown != 15*time.Minute || got.MinEncryptedBytes != defaultMinEncryptedBytes || got.EncryptedBytesPerReasoningToken != defaultEncryptedBytesPerReasoningToken {
+	if !got.Enabled || got.MaxAttempts != 6 || got.MinOutputTokens != 8 || got.OnExhausted != qualityRetryFailClosed || got.HoldTimeout != 30*time.Second || got.TotalHoldTimeout != 45*time.Second || got.AccountCooldown != 12*time.Hour || got.IdleAccountCooldown != 15*time.Minute || got.MinEncryptedBytes != defaultMinEncryptedBytes || got.EncryptedBytesPerReasoningToken != defaultEncryptedBytesPerReasoningToken {
 		t.Fatalf("defaults = %#v", got)
 	}
 }

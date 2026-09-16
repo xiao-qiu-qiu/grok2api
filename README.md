@@ -434,12 +434,13 @@ qualityGuard:
   model: "grok-4.6"
   # Withhold thinking-model streams that have no streamed reasoning.
   # Observe for up to 30s. A stub plus enough visible output at the deadline
-  # is withheld; empty stub-only streams keep waiting. Floor-met dumps that
+  # is withheld; inconclusive/empty streams time out without account penalties. Floor-met dumps that
   # flush a short greeting in under 1s are also withheld.
   requestRetry:
     enabled: true
     maxAttempts: 6
     holdTimeout: 30s
+    totalHoldTimeout: 45s
     minOutputTokens: 8
     onExhausted: fail_closed # fail_open | fail_closed
     accountCooldown: 12h
@@ -447,6 +448,10 @@ qualityGuard:
 ```
 
 `requestRetry` runs on the gateway request path and is independent of the sidecar. This fork enables it. A thinking-model stream with enough visible output and no streamed reasoning is **not delivered**; replay-safe stateless requests may try another account. TUI follow-ups (`previous_response_id`) and hosted-tool turns are still held for classification, but a quality withhold never replays account-bound state or side-effecting tools across accounts. Context compaction, image, video, and ForcedEgress probe requests are unchanged. If every attempt still has no reasoning, `onExhausted` returns `503 quality_degraded` or releases the held body.
+
+Quality pre-reading now has a hard per-attempt `holdTimeout` (30s by default) and a cumulative `totalHoldTimeout` (45s) across account retries. These limits cover quality pre-reading, **not** upstream connection/header waits or generation after handoff. When evidence remains inconclusive at the deadline, the stream closes and a replay-safe request may try another account within the remaining budget; exhaustion returns `504 quality_hold_timeout` unless an existing `fail_open` fallback is available. This timeout does not mark a slow account as missing-thinking or apply the empty-stream cooldown. Actual empty/idle streams retain their existing handling. Readable reasoning deltas still release immediately; strong ciphertext (at least twice the configured floor) plus at least 32 visible tokens spanning 1s can release before final usage arrives. This trades final-usage certainty for lower latency on substantial ongoing output while keeping short/burst checks.
+
+`quality_stream_checked` logs the pre-read duration and first byte/thinking/visible-output observations relative to pre-read start, without logging content. Failed pre-reads also appear in audit attempts as `quality_peek`, including empty streams that previously showed zero diagnostic attempts. Audit `attempt_count` remains a diagnostic-entry count, not the physical-call count.
 
 ```bash
 docker compose up -d

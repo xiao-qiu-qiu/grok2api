@@ -158,11 +158,14 @@ qualityGuard:
   # 上下文压缩是系统摘要操作，保持免拦截；账号绑定状态和有副作用的
   # hosted tools 只做分类与审计，不跨账号重放。
   # 3s hold 会把 grok-4.6 流末尾的 encrypted thinking 误判成 missing-thinking；
-  # 30s 是校验上限，也是 lab 默认。
+  # 单次预读硬上限 30s；跨账号累计预读最多 45s（不含上游响应头等待）。
+  # 超时只表示证据不足，不按 missing-thinking / 空流处罚账号。
+  # 可信密文且正文稳定输出时提前放行，无需等流末尾 usage。
   requestRetry:
     enabled: true
     maxAttempts: 6
     holdTimeout: 30s
+    totalHoldTimeout: 45s
     minOutputTokens: 8
     onExhausted: fail_closed # fail_open | fail_closed
     # First missing-thinking hit cools the account; a later hit after the
