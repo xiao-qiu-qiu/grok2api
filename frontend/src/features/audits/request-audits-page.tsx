@@ -346,22 +346,29 @@ const AuditRow = memo(function AuditRow({ audit, locale, onOpen }: { audit: Audi
 function ResponsePerformance({ audit, locale }: { audit: AuditDTO; locale: string }) {
   const { t } = useTranslation();
   const duration = splitDuration(formatDuration(audit.durationMs));
-  const firstToken = audit.firstTokenMs === undefined ? { value: "—", unit: "" } : splitDuration(formatDuration(audit.firstTokenMs));
-  const throughput = audit.outputTokensPerSecond === undefined ? "—" : formatNumber(audit.outputTokensPerSecond, locale, 1);
+  const firstToken = !audit.streaming
+    ? { value: t("audits.firstTokenNotApplicable"), unit: "" }
+    : audit.firstTokenMs === undefined
+      ? { value: t("audits.performanceNotRecorded"), unit: "" }
+      : splitDuration(formatDuration(audit.firstTokenMs));
+  const speed = audit.streaming ? audit.outputTokensPerSecond : audit.averageOutputTokensPerSecond;
+  const throughput = speed === undefined ? "—" : formatNumber(speed, locale, 1);
   return (
     <div className="grid w-fit max-w-full grid-cols-[auto_auto] gap-x-2.5 gap-y-0.5 whitespace-nowrap text-[11px] leading-4 tabular-nums">
       <span className="text-muted-foreground">{t("audits.durationMetric")}</span>
       <PerformanceValue value={duration.value} unit={duration.unit} />
       <span className="text-muted-foreground">{t("audits.firstTokenMetric")}</span>
-      <PerformanceValue value={firstToken.value} unit={firstToken.unit} />
-      <span className="text-muted-foreground">{t("audits.throughputMetric")}</span>
-      <PerformanceValue value={throughput} unit={t("audits.tokensPerSecondUnit")} />
+      <PerformanceValue value={firstToken.value} unit={firstToken.unit} hint={!audit.streaming ? t("audits.nonStreamFirstTokenHint") : undefined} />
+      <span className="text-muted-foreground">{t(audit.streaming ? "audits.throughputMetric" : "audits.averageThroughputMetric")}</span>
+      <PerformanceValue value={throughput} unit={speed === undefined ? "" : t("audits.tokensPerSecondUnit")} hint={t(audit.streaming ? "audits.streamThroughputHint" : "audits.averageThroughputHint")} />
     </div>
   );
 }
 
-function PerformanceValue({ value, unit }: { value: string; unit: string }) {
-  return <span className="font-medium">{value}{unit ? <> <span className="font-normal">{unit}</span></> : null}</span>;
+function PerformanceValue({ value, unit, hint }: { value: string; unit: string; hint?: string }) {
+  const content = <span className={cn("font-medium", hint && "cursor-help")} tabIndex={hint ? 0 : undefined}>{value}{unit ? <> <span className="font-normal">{unit}</span></> : null}</span>;
+  if (!hint) return content;
+  return <Tooltip><TooltipTrigger asChild>{content}</TooltipTrigger><TooltipContent className="max-w-72 leading-5">{hint}</TooltipContent></Tooltip>;
 }
 
 function splitDuration(value: string): { value: string; unit: string } {

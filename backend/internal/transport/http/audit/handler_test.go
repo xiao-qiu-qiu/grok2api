@@ -82,6 +82,30 @@ func TestAuditDetailReturnsCompleteTextAndBinaryBodies(t *testing.T) {
 	}
 }
 
+func TestAuditResponseNonStreamAverageWithoutInventingFirstToken(t *testing.T) {
+	value := auditdomain.Record{StatusCode: http.StatusOK, DurationMS: 43773, OutputTokens: 538, ReasoningTokens: 537}
+	response := newAuditResponse(value)
+	if response.FirstTokenMS != nil || response.OutputTokensPerSecond != nil {
+		t.Fatal("non-stream response must not invent TTFT or streaming throughput")
+	}
+	if response.AverageOutputTokensPerSecond == nil || *response.AverageOutputTokensPerSecond != float64(538)*1000/43773 {
+		t.Fatalf("average speed = %v; use existing output once, including reasoning", response.AverageOutputTokensPerSecond)
+	}
+	for _, mutate := range []func(*auditdomain.Record){
+		func(v *auditdomain.Record) { v.Streaming = true },
+		func(v *auditdomain.Record) { v.StatusCode = 503 },
+		func(v *auditdomain.Record) { v.ErrorCode = "upstream_stream_empty" },
+		func(v *auditdomain.Record) { v.DurationMS = 0 },
+		func(v *auditdomain.Record) { v.OutputTokens = 0 },
+	} {
+		invalid := value
+		mutate(&invalid)
+		if got := newAuditResponse(invalid).AverageOutputTokensPerSecond; got != nil {
+			t.Fatalf("unexpected average for incomplete/streaming audit: %v", *got)
+		}
+	}
+}
+
 func TestAuditResponseDerivesOutputThroughput(t *testing.T) {
 	firstTokenMS := int64(250)
 	response := newAuditResponse(auditdomain.Record{ClientIP: "203.0.113.8", StatusCode: http.StatusOK, Streaming: true, ReasoningEffort: "high", FirstTokenMS: &firstTokenMS, DurationMS: 1250, OutputTokens: 80})

@@ -175,7 +175,9 @@ function RequestOverviewPanel({ audit }: { audit: AuditDTO }) {
 
   const durationDisplay = useMemo(() => {
     let text = `${formatNumber(audit.durationMs, i18n.language)} ms`;
-    if (audit.firstTokenMs) {
+    if (!audit.streaming) {
+      text += ` (${t("audits.firstTokenMs")}: ${t("audits.firstTokenNotApplicable")})`;
+    } else if (audit.firstTokenMs !== undefined) {
       text += ` (${t("audits.firstTokenMs")}: ${formatNumber(audit.firstTokenMs, i18n.language)} ms)`;
     }
     return text;
@@ -212,6 +214,13 @@ function RequestOverviewPanel({ audit }: { audit: AuditDTO }) {
         label={t("audits.duration")}
         value={durationDisplay}
       />
+      {!audit.streaming && audit.averageOutputTokensPerSecond !== undefined ? (
+        <OverviewField
+          label={t("audits.averageThroughputMetric")}
+          value={`${formatNumber(audit.averageOutputTokensPerSecond, i18n.language, 1)} ${t("audits.tokensPerSecondUnit")}`}
+          hint={t("audits.averageThroughputHint")}
+        />
+      ) : null}
       <OverviewField
         label={t("audits.cost")}
         value={costDisplay}
@@ -458,7 +467,7 @@ function AttemptOverview({ attempt }: { attempt: AuditAttemptDTO }) {
   );
 }
 
-function OverviewField({ className, label, value, copy }: { className?: string; label: string; value: string; copy?: boolean }) {
+function OverviewField({ className, label, value, copy, hint }: { className?: string; label: string; value: string; copy?: boolean; hint?: string }) {
   return (
     <div className={cn("flex min-w-0 items-start gap-3 rounded-lg bg-muted/25 p-3", className)}>
       <div className="min-w-0 flex-1">
@@ -466,6 +475,7 @@ function OverviewField({ className, label, value, copy }: { className?: string; 
         <p className="mt-0.5 break-all text-xs font-medium" title={value}>
           {value}
         </p>
+        {hint ? <p className="mt-1 text-[11px] text-muted-foreground">{hint}</p> : null}
       </div>
       {copy ? (
         <div className="shrink-0 pt-0.5">

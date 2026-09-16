@@ -513,6 +513,8 @@ A non-empty `GROK2API_DATABASE_URL` overrides `database.postgres.dsn` and automa
 
 ### Client IPs behind a reverse proxy
 
+Audit performance distinguishes measured streaming TTFT/generation speed from non-streaming responses. Non-streaming TTFT is shown as N/A; successful responses with output show Avg TPS (output tokens divided by total request time, including waits and retries). This average is derived from existing records, so historical audits need no migration. Missing TTFT is never replaced with total duration.
+
 Request audits record the normalized client IPv4 or IPv6 address. Direct deployments need no extra configuration. Behind Nginx or another reverse proxy, configure both sides:
 
 1. Forward the standard client IP headers from the proxy:

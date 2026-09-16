@@ -132,6 +132,8 @@ type auditResponse struct {
 	RequestHeaders          map[string][]string       `json:"requestHeaders,omitempty"`
 	AttemptCount            int                       `json:"attemptCount"`
 	CreatedAt               time.Time                 `json:"createdAt"`
+
+	AverageOutputTokensPerSecond *float64 `json:"averageOutputTokensPerSecond,omitempty"`
 }
 
 type billingBreakdownResponse struct {
@@ -495,7 +497,8 @@ func newAuditResponse(value auditdomain.Record) auditResponse {
 		NumSourcesUsed: value.NumSourcesUsed, NumServerSideToolsUsed: value.NumServerSideToolsUsed,
 		ContextInputTokens: value.ContextInputTokens, ContextOutputTokens: value.ContextOutputTokens,
 		FirstTokenMS: value.FirstTokenMS, OutputTokensPerSecond: auditOutputTokensPerSecond(value), DurationMS: value.DurationMS,
-		ErrorCode: value.ErrorCode, RequestMethod: value.RequestMethod, RequestPath: value.RequestPath, RequestHeaders: value.RequestHeaders,
+		AverageOutputTokensPerSecond: auditAverageOutputTokensPerSecond(value),
+		ErrorCode:                    value.ErrorCode, RequestMethod: value.RequestMethod, RequestPath: value.RequestPath, RequestHeaders: value.RequestHeaders,
 		AttemptCount: value.AttemptCount,
 		CreatedAt:    value.CreatedAt,
 	}
@@ -542,6 +545,16 @@ func newBillingBreakdown(value auditdomain.Record) *billingBreakdownResponse {
 		})
 	}
 	return breakdown
+}
+
+// Non-streaming responses have no measured TTFT. Expose an explicitly named
+// end-to-end average instead of inventing a generation window or first token.
+func auditAverageOutputTokensPerSecond(value auditdomain.Record) *float64 {
+	if value.Streaming || value.StatusCode < 200 || value.StatusCode >= 300 || value.ErrorCode != "" || value.OutputTokens <= 0 || value.DurationMS <= 0 {
+		return nil
+	}
+	throughput := float64(value.OutputTokens) * 1000 / float64(value.DurationMS)
+	return &throughput
 }
 
 func auditOutputTokensPerSecond(value auditdomain.Record) *float64 {
