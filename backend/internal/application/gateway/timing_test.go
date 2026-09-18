@@ -49,3 +49,30 @@ func TestFirstTokenTimerMarksOnce(t *testing.T) {
 		t.Fatalf("timer changed after second mark: first=%v second=%v", first, second)
 	}
 }
+
+func TestGenerationTimingPreservesRetryAndQualitySequence(t *testing.T) {
+	timing := newGenerationTiming("test", accountdomain.ProviderBuild)
+	timing.markSelection(12 * time.Millisecond)
+	timing.markCredential(8 * time.Millisecond)
+	firstStart := timing.started.Add(20 * time.Millisecond)
+	timing.markUpstream(100 * time.Millisecond)
+	timing.recordCall(accountdomain.Credential{ID: 11, Name: "first"}, firstStart, 100*time.Millisecond, 200, false)
+	byteMS := int64(3)
+	timing.recordQuality(30*time.Second, &qualityPeekObservation{firstByteMS: &byteMS}, "timeout")
+	before := timing.snapshot()
+	timing.recordAction(1, "fallback")
+	timing.markUpstream(200 * time.Millisecond)
+	timing.recordCall(accountdomain.Credential{ID: 22, Name: "second"}, firstStart.Add(31*time.Second), 200*time.Millisecond, 200, false)
+	visibleMS := int64(500)
+	timing.recordQuality(time.Second, &qualityPeekObservation{firstVisibleMS: &visibleMS}, "deliver")
+	got := timing.snapshot()
+	if len(before.Calls) != 1 || before.Calls[0].Outcome != "timeout" || *before.Calls[0].QualityMS != 30000 || before.Calls[0].Action != "" || got.Calls[0].Action != "fallback" {
+		t.Fatalf("earlier snapshot changed: %+v", before)
+	}
+	if got.SelectionMS != 12 || got.CredentialMS != 8 || got.UpstreamMS != 300 || got.QualityMS != 31000 || len(got.Calls) != 2 {
+		t.Fatalf("incorrect phase totals: %+v", got)
+	}
+	if got.Calls[0].AccountID != "11" || got.Calls[1].AccountID != "22" || got.Calls[1].StartedOffsetMS != 31020 || got.Calls[1].Outcome != "deliver" || got.Calls[1].FirstByteMS != nil || *got.Calls[1].FirstVisibleMS != 500 {
+		t.Fatalf("retry metadata associated with wrong call: %+v", got.Calls)
+	}
+}

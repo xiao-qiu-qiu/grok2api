@@ -889,6 +889,7 @@ func (s *Service) createResponseAt(ctx context.Context, input Input, path string
 	}
 	accountScope := input.ClientKey.AccountScope()
 	var preselectedSession *selectionSession
+	initialSelectionStarted := time.Now()
 	// Skip targets whose account pool is already known to be unavailable. This
 	// gives same-name targets failover before any physical upstream request while
 	// preserving pinned Responses and forced administrator probes.
@@ -927,6 +928,7 @@ func (s *Service) createResponseAt(ctx context.Context, input Input, path string
 		}
 	}
 	publicModel := modeldomain.ExternalPublicID(route.Provider, route.PublicID)
+	initialSelectionWait := time.Since(initialSelectionStarted)
 	input.PublicModel = publicModel
 	if aliasEffort != "" {
 		input.Body, err = rewriteAliasedModel(input.Body, publicModel, aliasEffort, operation)
@@ -938,6 +940,8 @@ func (s *Service) createResponseAt(ctx context.Context, input Input, path string
 		return nil, routeErr
 	}
 	timing := newGenerationTiming(publicModel, route.Provider)
+	timing.started = startedAt
+	timing.markSelection(initialSelectionWait)
 	timingHandedOff := false
 	defer func() {
 		if !timingHandedOff {
@@ -963,6 +967,7 @@ func (s *Service) createResponseAt(ctx context.Context, input Input, path string
 		record.StatusCode = http.StatusForbidden
 		record.DurationMS = time.Since(startedAt).Milliseconds()
 		record.ErrorCode = "model_not_allowed"
+		record.Performance = timing.snapshot()
 		record.CreatedAt = time.Now().UTC()
 		applyAuditEgress(&record, egressTrace, route.Provider)
 		if err := s.audits.Create(ctx, record); err != nil {
@@ -1047,6 +1052,7 @@ func (s *Service) createResponseAt(ctx context.Context, input Input, path string
 	failureAttempts := newFailureAttemptRecorder(http.MethodPost, path)
 	normalizedMetadata := &provider.NormalizedRequestMetadata{}
 	responseStartedAt := startedAt
+	responseCallNumber := 0
 	forwardResponse := func(lease *accountLease, credential accountdomain.Credential, billing *accountdomain.Billing) (*provider.Response, error) {
 		started := time.Now()
 		responseStartedAt = started
@@ -1055,6 +1061,11 @@ func (s *Service) createResponseAt(ctx context.Context, input Input, path string
 		auditBase.ReasoningEffort = normalizedMetadata.ReasoningEffort
 		err = failureAttempts.captureResponse(credential, started, response, err)
 		timing.markUpstream(time.Since(started))
+		status := 0
+		if response != nil {
+			status = response.StatusCode
+		}
+		responseCallNumber = timing.recordCall(credential, started, time.Since(started), status, err != nil)
 		return response, err
 	}
 	ensureCredential := func(credential accountdomain.Credential, force bool) (accountdomain.Credential, error) {
@@ -1124,6 +1135,7 @@ func (s *Service) createResponseAt(ctx context.Context, input Input, path string
 					failureAttempts.ensureStreamFailureAttempt(credential, upstreamStartedAt, response, errorCode)
 				}
 				attempts := failureAttempts.snapshot()
+				record.Performance = timing.snapshot()
 				if !successful || len(attempts) > 0 {
 					record.Attempts = attempts
 				}
@@ -1195,6 +1207,7 @@ func (s *Service) createResponseAt(ctx context.Context, input Input, path string
 		credential        accountdomain.Credential
 		usage             Usage
 		upstreamStartedAt time.Time
+		callNumber        int
 	}
 	var fallback *qualityFallback
 	discardFallback := func(recordDegraded bool) {
@@ -1587,7 +1600,13 @@ attemptLoop:
 				peekOutcome := string(verdict)
 				if peekErr != nil {
 					peekOutcome = "error"
+					if errors.Is(peekErr, errQualityHoldTimeout) {
+						peekOutcome = "timeout"
+					} else if errors.Is(peekErr, errQualityEmptyStream) {
+						peekOutcome = "empty"
+					}
 				}
+				timing.recordQuality(heldFor, observation, peekOutcome)
 				s.logger.Info("quality_stream_checked", "request_id", input.RequestID, "account_id", credential.ID,
 					"hold_ms", heldFor.Milliseconds(), "remaining_hold_ms", max(int64(0), qualityHoldRemaining.Milliseconds()),
 					"first_byte_ms", observation.firstByteMS, "first_thinking_ms", observation.firstThinkingMS,
@@ -1642,6 +1661,7 @@ attemptLoop:
 					hasNextAccount = selection != nil && selection.hasAvailableCandidate(excluded, !quotaProbeAttempted)
 				}
 				commit := CommitQualityHold(verdict, qualityAccountAttempts-1, holdCfg.MaxAttempts, hasNextAccount, holdCfg.OnExhausted)
+				timing.recordAction(responseCallNumber, string(commit.Action))
 				if verdict == QualityWithhold {
 					s.applyMissingThinkingPenalty(ctx, input.RequestID, credential, holdCfg.AccountCooldown)
 				}
@@ -1654,7 +1674,7 @@ attemptLoop:
 				case QualityActionRetry:
 					if deferFailOpenAudit {
 						discardFallback(true)
-						fallback = &qualityFallback{response: response, lease: lease, credential: credential, usage: peekUsage, upstreamStartedAt: responseStartedAt}
+						fallback = &qualityFallback{response: response, lease: lease, credential: credential, usage: peekUsage, upstreamStartedAt: responseStartedAt, callNumber: responseCallNumber}
 						lease.completeSelectorObservation(true)
 						lease.Release()
 					} else {
@@ -1709,6 +1729,7 @@ attemptLoop:
 			selected := fallback
 			fallback = nil
 			s.logger.Info("quality_degraded_fallback", "request_id", input.RequestID, "account_id", selected.credential.ID, "quality_attempts", qualityAccountAttempts)
+			timing.recordAction(selected.callNumber, "fallback")
 			return handoffResponse(selected.response, selected.lease, selected.credential, selected.upstreamStartedAt), nil
 		}
 		return handoffResponse(response, lease, credential, responseStartedAt), nil
@@ -1718,6 +1739,7 @@ attemptLoop:
 			selected := fallback
 			fallback = nil
 			s.logger.Info("quality_degraded_fallback", "request_id", input.RequestID, "account_id", selected.credential.ID, "quality_attempts", qualityAccountAttempts)
+			timing.recordAction(selected.callNumber, "fallback")
 			return handoffResponse(selected.response, selected.lease, selected.credential, selected.upstreamStartedAt), nil
 		}
 		discardFallback(true)
@@ -1728,6 +1750,7 @@ attemptLoop:
 		record.DurationMS = time.Since(startedAt).Milliseconds()
 		record.ErrorCode = lastFailure.AuditCode()
 		record.Attempts = failureAttempts.snapshot()
+		record.Performance = timing.snapshot()
 		record.CreatedAt = time.Now().UTC()
 		applyAuditEgress(&record, egressTrace, route.Provider)
 		if lastFailure.AccountID != 0 {
@@ -1764,6 +1787,7 @@ attemptLoop:
 		record.AccountID = &accountID
 	}
 	record.Attempts = failureAttempts.snapshot()
+	record.Performance = timing.snapshot()
 	record.CreatedAt = time.Now().UTC()
 	applyAuditEgress(&record, egressTrace, route.Provider)
 	persistCtx, cancel := context.WithTimeout(context.Background(), finalizationTimeout)

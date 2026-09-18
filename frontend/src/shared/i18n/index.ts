@@ -1,9 +1,11 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
+import { auditPerformanceLabels } from "@/features/audits/audit-performance-labels";
 
 const resources = {
   "zh-CN": {
     translation: {
+      auditTiming: auditPerformanceLabels.zh,
       appName: "Grok2API",
       webAccountSettings: {
         menu: "账号设置",
@@ -1396,6 +1398,7 @@ const resources = {
   },
   en: {
     translation: {
+      auditTiming: auditPerformanceLabels.en,
       appName: "Grok2API",
       webAccountSettings: {
         menu: "Account settings",

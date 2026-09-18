@@ -437,6 +437,104 @@ func TestAuditRepositoryRoundTripsFailureAttempts(t *testing.T) {
 	}
 }
 
+func TestAuditRepositoryRoundTripsPerformanceAndKeepsLegacyRecordsNil(t *testing.T) {
+	ctx := context.Background()
+	database, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "audit-performance.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.InitializeSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	repository := NewAuditRepository(database)
+	now := time.Now().UTC()
+	firstByte := int64(140)
+	performance := &audit.Performance{
+		SelectionMS:  12,
+		CredentialMS: 23,
+		UpstreamMS:   456,
+		QualityMS:    78,
+		Calls: []audit.PerformanceCall{{
+			Number: 1, AccountID: "7", AccountName: "primary", StartedOffsetMS: 35,
+			UpstreamMS: 456, StatusCode: http.StatusOK, Outcome: "success", QualityMS: int64Pointer(78), FirstByteMS: &firstByte,
+		}},
+	}
+	if err := repository.Create(ctx, audit.Record{
+		EventID: "evt_audit_performance_0001", RequestID: "performance", ClientKeyID: 1, ModelRouteID: 1,
+		StatusCode: http.StatusOK, Performance: performance, CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var storedRow requestAuditModel
+	if err := database.db.WithContext(ctx).Where("event_id = ?", "evt_audit_performance_0001").First(&storedRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedRow.PerformanceJSON == "{}" || storedRow.PerformanceJSON == "" {
+		t.Fatalf("performance JSON was not stored: %q", storedRow.PerformanceJSON)
+	}
+	stored, err := repository.Get(ctx, storedRow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Performance == nil || stored.Performance.SelectionMS != performance.SelectionMS || stored.Performance.CredentialMS != performance.CredentialMS || stored.Performance.UpstreamMS != performance.UpstreamMS || stored.Performance.QualityMS != performance.QualityMS || len(stored.Performance.Calls) != 1 {
+		t.Fatalf("stored performance = %#v", stored.Performance)
+	}
+	storedCall := stored.Performance.Calls[0]
+	if storedCall.Number != 1 || storedCall.AccountID != "7" || storedCall.AccountName != "primary" || storedCall.StartedOffsetMS != 35 || storedCall.UpstreamMS != 456 || storedCall.StatusCode != http.StatusOK || storedCall.Outcome != "success" || storedCall.QualityMS == nil || *storedCall.QualityMS != 78 || storedCall.FirstByteMS == nil || *storedCall.FirstByteMS != firstByte {
+		t.Fatalf("stored performance call = %#v", storedCall)
+	}
+
+	if err := repository.Create(ctx, audit.Record{
+		EventID: "evt_audit_performance_0002", RequestID: "legacy-performance", ClientKeyID: 1, ModelRouteID: 1,
+		StatusCode: http.StatusOK, CreatedAt: now.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var legacyRow requestAuditModel
+	if err := database.db.WithContext(ctx).Where("event_id = ?", "evt_audit_performance_0002").First(&legacyRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	if legacyRow.PerformanceJSON != "{}" {
+		t.Fatalf("nil performance JSON = %q, want {}", legacyRow.PerformanceJSON)
+	}
+	legacy, err := repository.Get(ctx, legacyRow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Performance != nil {
+		t.Fatalf("legacy performance = %#v, want nil", legacy.Performance)
+	}
+	if err := database.db.WithContext(ctx).Model(&requestAuditModel{}).Where("id = ?", legacyRow.ID).Update("performance_json", "null").Error; err != nil {
+		t.Fatal(err)
+	}
+	nullStored, err := repository.Get(ctx, legacyRow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nullStored.Performance != nil {
+		t.Fatalf("null performance = %#v, want nil", nullStored.Performance)
+	}
+	listed, _, err := repository.List(ctx, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range listed {
+		if item.Performance != nil {
+			t.Fatalf("list loaded performance payload for %q: %#v", item.RequestID, item.Performance)
+		}
+	}
+	cursorItems, _, err := repository.ListCursor(ctx, repositorypkg.AuditCursorQuery{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range cursorItems {
+		if item.Performance != nil {
+			t.Fatalf("cursor list loaded performance payload for %q: %#v", item.RequestID, item.Performance)
+		}
+	}
+}
+
 func TestAuditRepositoryNormalizesUntrustedUsage(t *testing.T) {
 	ctx := context.Background()
 	database, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "audit-normalize.db"))
@@ -657,3 +755,5 @@ func TestAuditRepositoryPurgeOlderThanBatchesAuditsAndAttempts(t *testing.T) {
 }
 
 func uint64Pointer(value uint64) *uint64 { return &value }
+
+func int64Pointer(value int64) *int64 { return &value }

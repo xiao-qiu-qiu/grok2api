@@ -3,11 +3,13 @@ package gateway
 import (
 	"io"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	accountdomain "github.com/chenyme/grok2api/backend/internal/domain/account"
+	"github.com/chenyme/grok2api/backend/internal/domain/audit"
 	"github.com/chenyme/grok2api/backend/internal/pkg/perfmetrics"
 )
 
@@ -24,6 +26,51 @@ type generationTiming struct {
 	firstBody      time.Duration
 	attempts       int
 	finished       bool
+	calls          []audit.PerformanceCall
+	qualityWait    time.Duration
+}
+
+func (t *generationTiming) recordCall(credential accountdomain.Credential, started time.Time, duration time.Duration, status int, failed bool) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	outcome := "response"
+	if failed || status >= 400 {
+		outcome = "error"
+	}
+	t.calls = append(t.calls, audit.PerformanceCall{Number: len(t.calls) + 1,
+		AccountID: strconv.FormatUint(credential.ID, 10), AccountName: credential.Name,
+		StartedOffsetMS: max(int64(0), started.Sub(t.started).Milliseconds()),
+		UpstreamMS:      duration.Milliseconds(), StatusCode: status, Outcome: outcome})
+	return len(t.calls)
+}
+
+func (t *generationTiming) recordAction(number int, action string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if number > 0 && number <= len(t.calls) {
+		t.calls[number-1].Action = action
+	}
+}
+
+func (t *generationTiming) recordQuality(duration time.Duration, observation *qualityPeekObservation, outcome string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.qualityWait += duration
+	if len(t.calls) == 0 {
+		return
+	}
+	call := &t.calls[len(t.calls)-1]
+	ms := duration.Milliseconds()
+	call.QualityMS, call.Outcome = &ms, outcome
+	call.FirstByteMS, call.FirstThinkingMS, call.FirstVisibleMS = observation.firstByteMS, observation.firstThinkingMS, observation.firstVisibleMS
+}
+
+func (t *generationTiming) snapshot() *audit.Performance {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return &audit.Performance{SelectionMS: t.selectionWait.Milliseconds(), CredentialMS: t.credentialWait.Milliseconds(),
+		UpstreamMS: t.upstreamWait.Milliseconds(), QualityMS: t.qualityWait.Milliseconds(),
+		Calls: append([]audit.PerformanceCall{}, t.calls...)}
 }
 
 func newGenerationTiming(route string, provider accountdomain.Provider) *generationTiming {

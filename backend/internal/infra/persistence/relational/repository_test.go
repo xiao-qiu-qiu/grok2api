@@ -505,7 +505,7 @@ func TestFreshSchemaContract(t *testing.T) {
 	assertTableColumns(t, database, "web_account_profiles", []string{"account_id", "tier", "synced_at", "nsfw_enabled_at"}, nil)
 	assertTableColumns(t, database, "admin_sessions", nil, []string{"revoked_at"})
 	assertTableColumns(t, database, "account_model_capabilities", []string{"account_id", "upstream_model"}, []string{"provider", "synced_at"})
-	assertTableColumns(t, database, "request_audits", []string{"media_input_images", "media_output_images", "media_output_seconds", "first_token_ms"}, nil)
+	assertTableColumns(t, database, "request_audits", []string{"media_input_images", "media_output_images", "media_output_seconds", "first_token_ms", "performance_json"}, nil)
 	assertTableColumns(t, database, "response_ownership", []string{"response_id", "account_id", "client_key_id", "model_route_id", "provider", "prompt_cache_key", "reasoning_replay_key", "expires_at"}, []string{"parent_response_id"})
 	assertTableColumns(t, database, "media_assets", []string{"expires_at"}, nil)
 	if !database.db.Migrator().HasIndex(&mediaAssetModel{}, "idx_media_assets_expires") {

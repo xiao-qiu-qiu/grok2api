@@ -30,6 +30,7 @@ func (h *Handler) Register(router *gin.RouterGroup) {
 	router.GET("/request-audits", h.list)
 	router.GET("/request-audits/summary", h.summary)
 	router.GET("/request-audits/degrade-accounts", h.degradeAccounts)
+	router.GET("/request-audits/:id/performance", h.getPerformance)
 	router.GET("/request-audits/:id", h.get)
 }
 
@@ -182,8 +183,9 @@ type auditErrorFrameResponse struct {
 }
 
 type auditDetailResponse struct {
-	Audit    auditResponse          `json:"audit"`
-	Attempts []auditAttemptResponse `json:"attempts"`
+	Audit       auditResponse            `json:"audit"`
+	Attempts    []auditAttemptResponse   `json:"attempts"`
+	Performance *auditdomain.Performance `json:"performance,omitempty"`
 }
 
 func (h *Handler) list(c *gin.Context) {
@@ -234,12 +236,25 @@ func (h *Handler) listCursor(c *gin.Context) {
 }
 
 func (h *Handler) get(c *gin.Context) {
+	h.getDetail(c, false)
+}
+
+func (h *Handler) getPerformance(c *gin.Context) {
+	h.getDetail(c, true)
+}
+
+func (h *Handler) getDetail(c *gin.Context, performanceOnly bool) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || id == 0 {
 		response.Error(c, http.StatusBadRequest, "invalidId", "审计 ID 无效")
 		return
 	}
-	value, err := h.service.Get(c.Request.Context(), id)
+	var value auditdomain.Record
+	if performanceOnly {
+		value, err = h.service.GetPerformance(c.Request.Context(), id)
+	} else {
+		value, err = h.service.Get(c.Request.Context(), id)
+	}
 	if errors.Is(err, repository.ErrNotFound) {
 		response.Error(c, http.StatusNotFound, "auditNotFound", "审计记录不存在")
 		return
@@ -248,8 +263,28 @@ func (h *Handler) get(c *gin.Context) {
 		response.Error(c, http.StatusInternalServerError, "auditDetailFailed", "读取审计详情失败")
 		return
 	}
+	if performanceOnly {
+		value.RequestHeaders = nil
+	}
 	attempts := make([]auditAttemptResponse, 0, len(value.Attempts))
 	for _, attempt := range value.Attempts {
+		if performanceOnly {
+			errorChain := make([]auditErrorFrameResponse, 0, min(1, len(attempt.ErrorChain)))
+			if len(attempt.ErrorChain) > 0 {
+				frame := attempt.ErrorChain[0]
+				errorChain = append(errorChain, auditErrorFrameResponse{Type: frame.Type, Message: truncateAuditDiagnostic(frame.Message)})
+			}
+			attempts = append(attempts, auditAttemptResponse{
+				ID: attempt.ID, Number: attempt.Number, Source: string(attempt.Source), Stage: attempt.Stage,
+				AccountID: attempt.AccountID, AccountName: attempt.AccountName, Method: attempt.Method, RequestPath: attempt.RequestPath,
+				StartedAt: attempt.StartedAt, DurationMS: attempt.DurationMS,
+				UpstreamStatusCode: attempt.UpstreamStatusCode, UpstreamStatus: attempt.UpstreamStatus,
+				ResponseHeaders: map[string][]string{}, ResponseBody: "", ResponseBodyEncoding: "utf8",
+				ResponseBodyTruncated: attempt.ResponseBodyTruncated,
+				TransportError:        truncateAuditDiagnostic(attempt.TransportError), ErrorChain: errorChain,
+			})
+			continue
+		}
 		body := string(attempt.ResponseBody)
 		encoding := "utf8"
 		if !utf8.Valid(attempt.ResponseBody) {
@@ -270,7 +305,16 @@ func (h *Handler) get(c *gin.Context) {
 			TransportError:        attempt.TransportError, ErrorChain: errorChain,
 		})
 	}
-	response.Success(c, http.StatusOK, auditDetailResponse{Audit: newAuditResponse(value), Attempts: attempts})
+	response.Success(c, http.StatusOK, auditDetailResponse{Audit: newAuditResponse(value), Attempts: attempts, Performance: value.Performance})
+}
+
+func truncateAuditDiagnostic(value string) string {
+	const limit = 300
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }
 
 type summaryResponse struct {

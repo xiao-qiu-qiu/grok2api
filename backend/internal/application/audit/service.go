@@ -124,6 +124,10 @@ type Service struct {
 	dropObserver         func([]string)
 }
 
+type auditPerformanceReader interface {
+	GetPerformance(context.Context, uint64) (auditdomain.Record, error)
+}
+
 func NewService(audits repository.AuditRepository, logger *slog.Logger, bufferSize, batchSize int, flushInterval time.Duration) *Service {
 	if logger == nil {
 		logger = slog.Default()
@@ -476,6 +480,29 @@ func (s *Service) List(ctx context.Context, page, pageSize int) ([]auditdomain.R
 
 func (s *Service) Get(ctx context.Context, id uint64) (auditdomain.Record, error) {
 	return s.audits.Get(ctx, id)
+}
+
+// GetPerformance reads only the metadata needed by the performance panel. Older
+// repository implementations fall back to Get so existing test doubles remain
+// compatible; the fallback still removes response payloads before returning.
+func (s *Service) GetPerformance(ctx context.Context, id uint64) (auditdomain.Record, error) {
+	if reader, ok := s.audits.(auditPerformanceReader); ok {
+		return reader.GetPerformance(ctx, id)
+	}
+	value, err := s.audits.Get(ctx, id)
+	if err != nil {
+		return auditdomain.Record{}, err
+	}
+	value.RequestHeaders = nil
+	if len(value.Attempts) > 0 {
+		value.Attempts = append([]auditdomain.Attempt(nil), value.Attempts...)
+	}
+	for index := range value.Attempts {
+		value.Attempts[index].UpstreamURL = ""
+		value.Attempts[index].ResponseHeaders = nil
+		value.Attempts[index].ResponseBody = nil
+	}
+	return value, nil
 }
 
 // PurgeOutdated 清理超过指定保留天数的历史审计记录。

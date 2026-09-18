@@ -2013,6 +2013,9 @@ func TestAttemptLoopQualityHoldTimeoutUsesTotalBudgetWithoutCoolingAccounts(t *t
 		}
 	}
 	detail := qualityAuditDetailForRequest(t, fixture, "req-quality-budget")
+	if detail.Performance == nil || len(detail.Performance.Calls) != 2 || detail.Performance.QualityMS <= 0 || detail.Performance.Calls[0].Outcome != "timeout" || detail.Performance.Calls[1].Outcome != "timeout" {
+		t.Fatalf("missing timeout retry performance: %+v", detail.Performance)
+	}
 	if detail.StatusCode != http.StatusGatewayTimeout || detail.ErrorCode != "quality_hold_timeout" {
 		t.Fatalf("quality timeout audit = %#v", detail)
 	}
@@ -2063,6 +2066,9 @@ func TestAttemptLoopQualityEmptyStreamRetriesAndRecordsPeekAttempt(t *testing.T)
 		t.Fatalf("empty stream must retry the next account, attempts=%#v", attempts)
 	}
 	detail := qualityAuditDetailForRequest(t, fixture, "req-quality-empty")
+	if detail.Performance == nil || len(detail.Performance.Calls) != 2 || detail.Performance.Calls[0].Outcome != "empty" || detail.Performance.Calls[1].Outcome != "deliver" || detail.Performance.Calls[1].Action != "deliver" || detail.Performance.Calls[1].FirstThinkingMS == nil {
+		t.Fatalf("missing successful retry performance: %+v", detail.Performance)
+	}
 	if detail.StatusCode != http.StatusOK || detail.ErrorCode != "" {
 		t.Fatalf("successful retry audit = %#v", detail)
 	}

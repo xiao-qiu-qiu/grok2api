@@ -99,6 +99,28 @@ export type AuditAttemptDTO = {
 export type AuditDetailDTO = {
   audit: AuditDTO;
   attempts: AuditAttemptDTO[];
+  performance?: AuditPerformanceDTO;
+};
+
+export type AuditPerformanceDTO = {
+  selectionMs: number;
+  credentialMs: number;
+  upstreamMs: number;
+  qualityMs: number;
+  calls: Array<{
+    number: number;
+    accountId?: string;
+    accountName?: string;
+    startedOffsetMs: number;
+    upstreamMs: number;
+    statusCode: number;
+    outcome: string;
+    action?: string;
+    qualityMs?: number;
+    firstByteMs?: number;
+    firstThinkingMs?: number;
+    firstVisibleMs?: number;
+  }>;
 };
 
 export type AuditCursorPageDTO = {
@@ -186,6 +208,14 @@ const decodeAuditSummary = createObjectDecoder<AuditSummaryDTO>("audit summary",
 const decodeAuditDetail = createObjectDecoder<AuditDetailDTO>("audit detail", {
   audit: auditValidator,
   attempts: isArrayOf(auditAttemptValidator),
+  performance: isOptional(hasShape({
+    selectionMs: isNumber, credentialMs: isNumber, upstreamMs: isNumber, qualityMs: isNumber,
+    calls: isArrayOf(hasShape({
+      number: isNumber, accountId: isOptional(isString), accountName: isOptional(isString),
+      startedOffsetMs: isNumber, upstreamMs: isNumber, statusCode: isNumber, outcome: isString, action: isOptional(isString),
+      qualityMs: isOptional(isNumber), firstByteMs: isOptional(isNumber), firstThinkingMs: isOptional(isNumber), firstVisibleMs: isOptional(isNumber),
+    })),
+  })),
 });
 
 type AuditQuery = {
@@ -232,4 +262,8 @@ export function getRequestAuditSummary(input: Omit<AuditQuery, "cursor" | "pageS
 
 export function getRequestAudit(id: string, signal?: AbortSignal): Promise<AuditDetailDTO> {
   return apiRequest(`/api/admin/v1/request-audits/${id}`, { signal }, decodeAuditDetail);
+}
+
+export function getRequestAuditPerformance(id: string, signal?: AbortSignal): Promise<AuditDetailDTO> {
+  return apiRequest(`/api/admin/v1/request-audits/${id}/performance`, { signal }, decodeAuditDetail);
 }

@@ -32,10 +32,18 @@ func TestAuditDetailReturnsCompleteTextAndBinaryBodies(t *testing.T) {
 	repository := relational.NewAuditRepository(database)
 	now := time.Now().UTC()
 	status := http.StatusBadGateway
+	firstByteMS := int64(140)
 	if err := repository.Create(ctx, auditdomain.Record{
 		EventID: "evt_audit_handler_0001", RequestID: "request-detail", ClientKeyID: 1, ModelRouteID: 1, StatusCode: status, CreatedAt: now,
+		Performance: &auditdomain.Performance{
+			SelectionMS: 12, CredentialMS: 23, UpstreamMS: 456, QualityMS: 78,
+			Calls: []auditdomain.PerformanceCall{{
+				Number: 1, AccountID: "7", AccountName: "primary", StartedOffsetMS: 35,
+				UpstreamMS: 456, StatusCode: status, Outcome: "failed", FirstByteMS: &firstByteMS,
+			}},
+		},
 		Attempts: []auditdomain.Attempt{
-			{Number: 1, Source: auditdomain.AttemptSourceUpstreamHTTP, Stage: "upstream_response", StartedAt: now, UpstreamStatusCode: &status, ResponseHeaders: http.Header{"Content-Type": {"application/json"}}, ResponseBody: []byte(`{"error":"complete"}`), ResponseBodyTruncated: true},
+			{Number: 1, Source: auditdomain.AttemptSourceUpstreamHTTP, Stage: "upstream_response", StartedAt: now, UpstreamURL: "https://upstream.example.test/v1/responses", UpstreamStatusCode: &status, ResponseHeaders: http.Header{"Content-Type": {"application/json"}}, ResponseBody: []byte(`{"error":"complete"}`), ResponseBodyTruncated: true, TransportError: strings.Repeat("传输诊断", 100), ErrorChain: []auditdomain.ErrorFrame{{Type: "upstream", Message: strings.Repeat("错误诊断", 100)}, {Type: "secondary", Message: "must be omitted"}}},
 			{Number: 2, Source: auditdomain.AttemptSourceUpstreamHTTP, Stage: "upstream_response", StartedAt: now, UpstreamStatusCode: &status, ResponseHeaders: http.Header{}, ResponseBody: []byte{0x00, 0xff, 0x01}},
 		},
 	}); err != nil {
@@ -55,7 +63,8 @@ func TestAuditDetailReturnsCompleteTextAndBinaryBodies(t *testing.T) {
 			Audit struct {
 				AttemptCount int `json:"attemptCount"`
 			} `json:"audit"`
-			Attempts []struct {
+			Performance *auditdomain.Performance `json:"performance"`
+			Attempts    []struct {
 				ResponseBody          string `json:"responseBody"`
 				ResponseBodyEncoding  string `json:"responseBodyEncoding"`
 				ResponseBodyTruncated bool   `json:"responseBodyTruncated"`
@@ -68,11 +77,56 @@ func TestAuditDetailReturnsCompleteTextAndBinaryBodies(t *testing.T) {
 	if payload.Data.Audit.AttemptCount != 2 || len(payload.Data.Attempts) != 2 {
 		t.Fatalf("payload = %#v", payload)
 	}
+	if payload.Data.Performance == nil || payload.Data.Performance.SelectionMS != 12 || payload.Data.Performance.CredentialMS != 23 || payload.Data.Performance.UpstreamMS != 456 || payload.Data.Performance.QualityMS != 78 || len(payload.Data.Performance.Calls) != 1 || payload.Data.Performance.Calls[0].AccountID != "7" || payload.Data.Performance.Calls[0].FirstByteMS == nil || *payload.Data.Performance.Calls[0].FirstByteMS != firstByteMS {
+		t.Fatalf("performance = %#v", payload.Data.Performance)
+	}
 	if payload.Data.Attempts[0].ResponseBodyEncoding != "utf8" || payload.Data.Attempts[0].ResponseBody != `{"error":"complete"}` || !payload.Data.Attempts[0].ResponseBodyTruncated {
 		t.Fatalf("text body = %#v", payload.Data.Attempts[0])
 	}
 	if payload.Data.Attempts[1].ResponseBodyEncoding != "base64" || payload.Data.Attempts[1].ResponseBody != base64.StdEncoding.EncodeToString([]byte{0x00, 0xff, 0x01}) {
 		t.Fatalf("binary body = %#v", payload.Data.Attempts[1])
+	}
+
+	lightValue, err := repository.GetPerformance(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lightValue.RequestHeaders != nil || len(lightValue.Attempts) != 2 || lightValue.Attempts[0].ResponseBody != nil || len(lightValue.Attempts[0].ResponseHeaders) != 0 || lightValue.Attempts[0].UpstreamURL != "" {
+		t.Fatalf("light repository value leaked payload fields: %#v", lightValue)
+	}
+
+	lightRecorder := httptest.NewRecorder()
+	router.ServeHTTP(lightRecorder, httptest.NewRequest(http.MethodGet, "/api/admin/v1/request-audits/1/performance", nil))
+	if lightRecorder.Code != http.StatusOK {
+		t.Fatalf("light status = %d, body = %s", lightRecorder.Code, lightRecorder.Body.String())
+	}
+	var lightPayload struct {
+		Data struct {
+			Audit struct {
+				RequestHeaders map[string][]string `json:"requestHeaders"`
+			} `json:"audit"`
+			Performance *auditdomain.Performance `json:"performance"`
+			Attempts    []struct {
+				UpstreamURL     string              `json:"upstreamUrl"`
+				ResponseHeaders map[string][]string `json:"responseHeaders"`
+				ResponseBody    string              `json:"responseBody"`
+				TransportError  string              `json:"transportError"`
+				ErrorChain      []struct {
+					Type    string `json:"type"`
+					Message string `json:"message"`
+				} `json:"errorChain"`
+			} `json:"attempts"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(lightRecorder.Body.Bytes(), &lightPayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(lightPayload.Data.Audit.RequestHeaders) != 0 || lightPayload.Data.Performance == nil || len(lightPayload.Data.Attempts) != 2 {
+		t.Fatalf("light payload = %#v", lightPayload)
+	}
+	lightAttempt := lightPayload.Data.Attempts[0]
+	if lightAttempt.UpstreamURL != "" || len(lightAttempt.ResponseHeaders) != 0 || lightAttempt.ResponseBody != "" || len([]rune(lightAttempt.TransportError)) != 300 || len(lightAttempt.ErrorChain) != 1 || len([]rune(lightAttempt.ErrorChain[0].Message)) != 300 || lightAttempt.ErrorChain[0].Type != "upstream" {
+		t.Fatalf("light attempt = %#v", lightAttempt)
 	}
 
 	missing := httptest.NewRecorder()

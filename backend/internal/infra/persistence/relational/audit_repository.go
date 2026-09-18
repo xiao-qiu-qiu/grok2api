@@ -367,6 +367,14 @@ func toAuditModels(value audit.Record) (requestAuditModel, []requestAuditAttempt
 			requestHeadersJSON = string(raw)
 		}
 	}
+	performanceJSON := "{}"
+	if value.Performance != nil {
+		raw, err := json.Marshal(value.Performance)
+		if err != nil {
+			return requestAuditModel{}, nil, fmt.Errorf("序列化审计性能: %w", err)
+		}
+		performanceJSON = string(raw)
+	}
 	row := requestAuditModel{
 		EventID: truncate(eventID, 64), RequestID: truncate(value.RequestID, 64), ClientKeyID: value.ClientKeyID, ClientKeyName: truncate(value.ClientKeyName, 160), ClientIP: strings.TrimSpace(value.ClientIP),
 		ModelRouteID: value.ModelRouteID, ModelPublicID: truncate(value.ModelPublicID, 255), ModelUpstreamModel: truncate(value.ModelUpstreamModel, 255),
@@ -385,6 +393,7 @@ func toAuditModels(value audit.Record) (requestAuditModel, []requestAuditAttempt
 		RequestMethod:      truncate(value.RequestMethod, 16),
 		RequestPath:        truncate(value.RequestPath, 2048),
 		RequestHeadersJSON: truncate(requestHeadersJSON, 65536),
+		PerformanceJSON:    performanceJSON,
 		AttemptCount:       len(value.Attempts), CreatedAt: value.CreatedAt,
 	}
 	attempts := make([]requestAuditAttemptModel, 0, len(value.Attempts))
@@ -596,7 +605,7 @@ func (r *AuditRepository) List(ctx context.Context, offset, limit int) ([]audit.
 		return nil, 0, err
 	}
 	var rows []requestAuditModel
-	if err := query.Omit("request_headers_json").Order("created_at DESC, id DESC").Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
+	if err := query.Omit("request_headers_json", "performance_json").Order("created_at DESC, id DESC").Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
 		return nil, 0, err
 	}
 	out := make([]audit.Record, 0, len(rows))
@@ -607,17 +616,41 @@ func (r *AuditRepository) List(ctx context.Context, offset, limit int) ([]audit.
 }
 
 func (r *AuditRepository) Get(ctx context.Context, id uint64) (audit.Record, error) {
+	return r.get(ctx, id, false)
+}
+
+// GetPerformance loads only the audit metadata needed by the timing panel.
+// Request and response payloads remain in the database but are not selected.
+func (r *AuditRepository) GetPerformance(ctx context.Context, id uint64) (audit.Record, error) {
+	return r.get(ctx, id, true)
+}
+
+func (r *AuditRepository) get(ctx context.Context, id uint64, performanceOnly bool) (audit.Record, error) {
 	var row requestAuditModel
-	if err := r.db.db.WithContext(ctx).First(&row, id).Error; err != nil {
+	mainQuery := r.db.db.WithContext(ctx).Model(&requestAuditModel{})
+	if performanceOnly {
+		mainQuery = mainQuery.Omit("request_headers_json")
+	}
+	if err := mainQuery.First(&row, id).Error; err != nil {
 		return audit.Record{}, mapError(err)
 	}
 	var attemptRows []requestAuditAttemptModel
-	if err := r.db.db.WithContext(ctx).Where("audit_id = ?", id).Order("number ASC").Find(&attemptRows).Error; err != nil {
+	attemptQuery := r.db.db.WithContext(ctx).Model(&requestAuditAttemptModel{}).Where("audit_id = ?", id).Order("number ASC")
+	if performanceOnly {
+		attemptQuery = attemptQuery.Omit("response_body", "response_headers_json", "upstream_url")
+	}
+	if err := attemptQuery.Find(&attemptRows).Error; err != nil {
 		return audit.Record{}, err
 	}
 	value := toAuditDomain(row)
 	value.Attempts = make([]audit.Attempt, 0, len(attemptRows))
 	for _, attemptRow := range attemptRows {
+		if performanceOnly {
+			// Omitted JSON columns are zero-valued in the GORM model; use the
+			// existing converter without issuing a second payload query.
+			attemptRow.ResponseHeadersJSON = "{}"
+			attemptRow.UpstreamURL = ""
+		}
 		attempt, err := toAuditAttemptDomain(attemptRow)
 		if err != nil {
 			return audit.Record{}, err
@@ -652,7 +685,7 @@ func (r *AuditRepository) ListCursor(ctx context.Context, input repository.Audit
 	}
 	var rows []requestAuditModel
 	query = applyStableSort(query, input.Sort, fields, fallback, "request_audits.id")
-	if err := query.Omit("request_headers_json").Limit(input.Limit + 1).Find(&rows).Error; err != nil {
+	if err := query.Omit("request_headers_json", "performance_json").Limit(input.Limit + 1).Find(&rows).Error; err != nil {
 		return nil, false, err
 	}
 	hasMore := len(rows) > input.Limit

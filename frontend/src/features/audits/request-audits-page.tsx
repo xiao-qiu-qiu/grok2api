@@ -12,6 +12,7 @@ import { listModels } from "@/entities/model/model-api";
 import { listClientKeys } from "@/features/client-keys/client-keys-api";
 import { listAccounts } from "@/features/accounts/accounts-api";
 import { RequestAuditDetailDialog } from "@/features/audits/request-audit-detail-dialog";
+import { AuditPerformancePopover } from "@/features/audits/audit-performance-popover";
 import { buildAuditUsageView } from "@/features/audits/audit-usage";
 import { getRequestAudits, getRequestAuditSummary, type AuditBillingBreakdownDTO, type AuditBillingComponentDTO, type AuditDTO, type AuditPeriod } from "@/features/audits/request-audits-api";
 import { EmptyState, ErrorState, TableLoadingRow } from "@/shared/components/data-state";
@@ -335,7 +336,7 @@ const AuditRow = memo(function AuditRow({ audit, locale, onOpen }: { audit: Audi
       <TableCell><BillingValue audit={audit} /></TableCell>
       <TableCell className="px-3"><UsageDetails audit={audit} locale={locale} /></TableCell>
       <TableCell className="text-center"><AuditStatus audit={audit} onOpen={() => onOpen(audit)} /></TableCell>
-      <TableCell><ResponsePerformance audit={audit} locale={locale} /></TableCell>
+      <TableCell><AuditPerformancePopover audit={audit} onDetails={() => onOpen(audit)}><ResponsePerformance audit={audit} locale={locale} /></AuditPerformancePopover></TableCell>
       <TableCell className="whitespace-nowrap text-xs text-muted-foreground tabular-nums">
         <time dateTime={audit.createdAt} title={createdAtLabel}>{createdAt}</time>
       </TableCell>
@@ -358,9 +359,9 @@ function ResponsePerformance({ audit, locale }: { audit: AuditDTO; locale: strin
       <span className="text-muted-foreground">{t("audits.durationMetric")}</span>
       <PerformanceValue value={duration.value} unit={duration.unit} />
       <span className="text-muted-foreground">{t("audits.firstTokenMetric")}</span>
-      <PerformanceValue value={firstToken.value} unit={firstToken.unit} hint={!audit.streaming ? t("audits.nonStreamFirstTokenHint") : undefined} />
+      <PerformanceValue value={firstToken.value} unit={firstToken.unit} />
       <span className="text-muted-foreground">{t(audit.streaming ? "audits.throughputMetric" : "audits.averageThroughputMetric")}</span>
-      <PerformanceValue value={throughput} unit={speed === undefined ? "" : t("audits.tokensPerSecondUnit")} hint={t(audit.streaming ? "audits.streamThroughputHint" : "audits.averageThroughputHint")} />
+      <PerformanceValue value={throughput} unit={speed === undefined ? "" : t("audits.tokensPerSecondUnit")} />
     </div>
   );
 }

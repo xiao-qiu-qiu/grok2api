@@ -116,7 +116,33 @@ type Record struct {
 	RequestHeaders          map[string][]string
 	AttemptCount            int
 	Attempts                []Attempt
+	Performance             *Performance
 	CreatedAt               time.Time
+}
+
+// Performance contains request-path timing metadata only, never request bodies
+// or credentials. Missing on older records; do not infer zero-cost stages.
+type Performance struct {
+	SelectionMS  int64             `json:"selectionMs"`
+	CredentialMS int64             `json:"credentialMs"`
+	UpstreamMS   int64             `json:"upstreamMs"`
+	QualityMS    int64             `json:"qualityMs"`
+	Calls        []PerformanceCall `json:"calls"`
+}
+
+type PerformanceCall struct {
+	Number          int    `json:"number"`
+	AccountID       string `json:"accountId,omitempty"`
+	AccountName     string `json:"accountName,omitempty"`
+	StartedOffsetMS int64  `json:"startedOffsetMs"`
+	UpstreamMS      int64  `json:"upstreamMs"`
+	StatusCode      int    `json:"statusCode"`
+	Outcome         string `json:"outcome"`
+	Action          string `json:"action,omitempty"`
+	QualityMS       *int64 `json:"qualityMs,omitempty"`
+	FirstByteMS     *int64 `json:"firstByteMs,omitempty"`
+	FirstThinkingMS *int64 `json:"firstThinkingMs,omitempty"`
+	FirstVisibleMS  *int64 `json:"firstVisibleMs,omitempty"`
 }
 
 // Summary 表示指定审计范围内的聚合用量。

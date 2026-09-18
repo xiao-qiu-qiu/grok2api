@@ -71,6 +71,63 @@ func TestCreateCapturesClientIPFromRequestContext(t *testing.T) {
 	}
 }
 
+type performanceAuditRepository struct {
+	repository.AuditRepository
+	value            auditdomain.Record
+	getCalls         int
+	performanceCalls int
+}
+
+func (r *performanceAuditRepository) Get(context.Context, uint64) (auditdomain.Record, error) {
+	r.getCalls++
+	return r.value, nil
+}
+
+func (r *performanceAuditRepository) GetPerformance(context.Context, uint64) (auditdomain.Record, error) {
+	r.performanceCalls++
+	return r.value, nil
+}
+
+func TestGetPerformancePrefersOptionalRepositoryReader(t *testing.T) {
+	repo := &performanceAuditRepository{}
+	service := NewService(repo, slog.Default(), 8, 4, time.Hour)
+	if _, err := service.GetPerformance(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
+	if repo.performanceCalls != 1 || repo.getCalls != 0 {
+		t.Fatalf("performance calls = %d, get calls = %d", repo.performanceCalls, repo.getCalls)
+	}
+}
+
+type fallbackPerformanceAuditRepository struct {
+	repository.AuditRepository
+	value auditdomain.Record
+}
+
+func (r *fallbackPerformanceAuditRepository) Get(context.Context, uint64) (auditdomain.Record, error) {
+	return r.value, nil
+}
+
+func TestGetPerformanceFallbackClearsPayloadFields(t *testing.T) {
+	repo := &fallbackPerformanceAuditRepository{value: auditdomain.Record{
+		RequestHeaders: map[string][]string{"X-Test": {"value"}},
+		Attempts: []auditdomain.Attempt{{
+			UpstreamURL: "https://upstream.example.test", ResponseHeaders: map[string][]string{"Content-Type": {"application/json"}}, ResponseBody: []byte("secret"),
+		}},
+	}}
+	service := NewService(repo, slog.Default(), 8, 4, time.Hour)
+	value, err := service.GetPerformance(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.RequestHeaders != nil || len(value.Attempts) != 1 || value.Attempts[0].UpstreamURL != "" || value.Attempts[0].ResponseHeaders != nil || value.Attempts[0].ResponseBody != nil {
+		t.Fatalf("fallback performance value = %#v", value)
+	}
+	if repo.value.RequestHeaders == nil || repo.value.Attempts[0].UpstreamURL == "" || repo.value.Attempts[0].ResponseHeaders == nil || repo.value.Attempts[0].ResponseBody == nil {
+		t.Fatalf("fallback mutated source value = %#v", repo.value)
+	}
+}
+
 func TestCreateKeepsOnlySanitizedRequestMetadata(t *testing.T) {
 	repo := newGatedAuditRepository()
 	close(repo.release)
