@@ -1,6 +1,6 @@
 # 丢家宽给 AI：装成 Grok2API lab 同款
 
-**主路径是本 fork（lij768423-svg/grok2api）+ Quality Guard sidecar。不要装 CPA，不要只开一个节点，不要 pull 官方 latest 镜像。**
+**主路径是本 fork（xiao-qiu-qiu/grok2api）+ Quality Guard sidecar。不要装 CPA，不要只开一个节点，不要 pull 官方 latest 镜像。**
 
 用户只需要把全部家宽 sticky 丢给你。你负责：拆 session → Mihomo 每条一个 listener → Grok2API 每条一个 `fixed` 节点 → 打开 Guard。
 
@@ -21,6 +21,7 @@ https://github.com/lij768423-svg/grok2api/blob/main/AI_GROK2API_INSTALL.md
 - hold 30s / minOutput 8 / 6 枪 / fail_closed
 - 短 encrypted_content stub 不算思考；floor = max(256B, reasoning_tokens×4)
 - hold 到期后的短问候 + 高 reasoning（「你好」）继续扣；floor 达标但 1 秒内吐短回复也扣
+- vis&lt;8 / 明文倒灌：flush &lt;2s 且 reasoning/output ≥ 0.8 仍扣；可见字只数流式 content
 - TUI 续聊（previous_response_id）和 hosted tools 仍 hold，扣住后换号
 - 缺思考冷却 12h，空流 15m；docker compose up -d 带 sidecar
 
@@ -88,7 +89,7 @@ http://ACCOUNT-region-US-sid-XXXX-t-10:PASS@HOST:PORT
 5. 禁止：Grok2API 在 bridge 网络里填 `http://127.0.0.1:端口`（那是容器自己）。用 `network_mode: host`，或 `host.docker.internal` / 宿主机网关。
 6. 注册口和使用口不要抢同一条 sticky。脚本会在 N≥4 时自动拆。
 7. 不要把 CPA `.so`、8317、商店插件写进交付说明。
-8. 不要 `docker pull ghcr.io/chenyme/grok2api:latest`。官方镜像 **默认不拦截**，也没有本 fork 的密文 floor / burst。必须 `--build` 本仓库。
+8. 不要 `docker pull ghcr.io/chenyme/grok2api:latest`。官方镜像 **默认不拦截**，也没有本 fork 的密文 floor / burst / 假加密思考拦截。必须 `--build` 本仓库。
 
 ---
 
@@ -243,7 +244,7 @@ python3 ~/grok-fullchain/deploy/import_to_grok2api.py \
 | --- | --- |
 | Grok2API | URL（常见 `:8000` / `:8181`） |
 | Guard | `/quality-guard`；mode / failClosed / softTPS |
-| 拦截 | requestRetry 开；hold 30s；floor 256B / ×4；burst 开 |
+| 拦截 | requestRetry 开；hold 30s；floor 256B / ×4；burst / 假加密 dump / cipher-drool 开 |
 | 家宽 | 用户贴了 N 条 → 使用侧 x 个 + 注册侧 y 个 |
 | 出口 IP | 端口 → IP；标出重复 IP |
 | 像不像 lab | 使用侧 ≥3 且 Guard 已按本文打开 = 接近；否则写原因 |

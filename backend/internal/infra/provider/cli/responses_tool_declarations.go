@@ -188,16 +188,8 @@ func (c *responsesToolCompatibility) normalizeTool(raw any, namespace string, cl
 			delete(converted, "input_schema")
 			c.changed = true
 		}
-		if parameters, exists := converted["parameters"]; exists {
-			normalized, changed, normalizeErr := normalizeBuildFunctionParametersRootForTool(parameters, param+".parameters", name)
-			if normalizeErr != nil {
-				return nil, normalizeErr
-			}
-			if changed {
-				converted["parameters"] = normalized
-				c.changed = true
-				c.addWarning("function_parameters_root_normalized")
-			}
+		if compatibilityErr := c.applyBuildFunctionParameterCompatibility(converted, name, namespace, param+".parameters"); compatibilityErr != nil {
+			return nil, compatibilityErr
 		}
 		identity := responsesToolIdentity{Kind: responsesFunctionTool, Namespace: namespace, Name: name}
 		alias := c.functionAlias(identity)
@@ -321,8 +313,104 @@ func NormalizeBuildFunctionParametersRoot(value any, param, toolName string) (an
 	return normalizeBuildFunctionParametersRootForTool(value, param, toolName)
 }
 
-// normalizeBuildFunctionParametersRoot removes root-level nullability from function schemas
-// and lifts nested root unions. Nested nullable fields remain untouched.
+const (
+	codexAppNamespaceName    = "codex_app"
+	automationUpdateToolName = "automation_update"
+)
+
+func (c *responsesToolCompatibility) applyBuildFunctionParameterCompatibility(converted map[string]any, name, namespace, param string) error {
+	if parameters, exists := converted["parameters"]; exists {
+		normalized, changed, normalizeErr := normalizeBuildFunctionParametersRootForTool(parameters, param, name)
+		if normalizeErr != nil {
+			if !buildFunctionParametersNeedSimplification(name, namespace, parameters) {
+				return normalizeErr
+			}
+			c.simplifyBuildFunctionParameters(converted)
+			return nil
+		}
+		if changed {
+			converted["parameters"] = normalized
+			c.changed = true
+			c.addWarning("function_parameters_root_normalized")
+		}
+	}
+	if buildFunctionParametersNeedSimplification(name, namespace, converted["parameters"]) {
+		c.simplifyBuildFunctionParameters(converted)
+	}
+	return nil
+}
+
+func (c *responsesToolCompatibility) simplifyBuildFunctionParameters(converted map[string]any) {
+	converted["parameters"] = safeBuildFunctionParameters()
+	if _, exists := converted["strict"]; exists {
+		converted["strict"] = false
+	}
+	c.changed = true
+	c.addWarning("function_parameters_simplified_for_build")
+}
+
+func safeBuildFunctionParameters() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"properties":           map[string]any{},
+		"additionalProperties": true,
+	}
+}
+
+func isCodexAppAutomationUpdate(name, namespace string) bool {
+	name = strings.TrimSpace(name)
+	namespace = strings.TrimSpace(namespace)
+	qualified := codexAppNamespaceName + "__" + automationUpdateToolName
+	if strings.EqualFold(name, qualified) {
+		return true
+	}
+	return strings.EqualFold(namespace, codexAppNamespaceName) && strings.EqualFold(name, automationUpdateToolName)
+}
+
+func buildFunctionParametersNeedSimplification(name, namespace string, parameters any) bool {
+	return isCodexAppAutomationUpdate(name, namespace) || schemaRootUnionNeedsSimplification(parameters)
+}
+
+func schemaRootUnionNeedsSimplification(value any) bool {
+	schema, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, keyword := range []string{"anyOf", "oneOf"} {
+		branches, ok := schema[keyword].([]any)
+		if !ok {
+			continue
+		}
+		for _, raw := range branches {
+			branch, ok := raw.(map[string]any)
+			if !ok || !schemaTypeIsObjectOnly(branch["type"]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func schemaTypeIsObjectOnly(rawType any) bool {
+	if rawType == "object" {
+		return true
+	}
+	types, ok := rawType.([]any)
+	if !ok || len(types) == 0 {
+		return false
+	}
+	for _, value := range types {
+		if value != "object" {
+			return false
+		}
+	}
+	return true
+}
+
+// normalizeBuildFunctionParametersRoot removes root-level nullability from
+// function schemas and lifts nested root unions. Nested nullable fields remain
+// untouched. Invalid roots fall back to a loose object in the compatibility
+// layer so Grok Build can still compile the request.
 func normalizeBuildFunctionParametersRoot(value any, param string) (any, bool, error) {
 	return normalizeBuildFunctionParametersRootForTool(value, param, "")
 }

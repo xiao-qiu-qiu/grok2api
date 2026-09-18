@@ -24,7 +24,25 @@
 > 推荐个人新项目 [DEEIX-AI / DEEIX-Chat](https://github.com/DEEIX-AI/DEEIX-Chat)：面向多模型路由、对话、文件、工具、计费与运维的一体化轻量 AI 平台。
 
 > [!NOTE]
-> **本 fork（lij768423-svg/grok2api）开箱即用。** 基于官方最新，默认打开 `qualityGuard` + `requestRetry`：hold 30s、minOutput 8、密文 floor 256B / reasoning×4、burst（hold 过期短问候和 floor 达标秒吐仍扣）、TUI 续聊 / hosted tools 也 hold、缺思考 12h 冷却、空流 15m。`docker compose up -d --build` 会带上质量守护 sidecar。不要 pull `ghcr.io/chenyme/grok2api:latest`（官方同参数但默认不拦截）。上游：[chenyme#1013](https://github.com/chenyme/grok2api/pull/1013) floor，[chenyme#1015](https://github.com/chenyme/grok2api/pull/1015) TUI hold — 不要带 fork 的 `enabled: true`。
+> **本 fork（xiao-qiu-qiu/grok2api）合并官方与 lab 两条最新开发线。** 默认打开 `qualityGuard` + `requestRetry`，并保留本地审计与有界延迟优化；lab 功能基线为 **v3.1.8-lab**。`docker compose up -d --build` 会带上质量守护 sidecar。需要这些质量检查时不要直接 pull `ghcr.io/chenyme/grok2api:latest`，因为官方镜像默认不启用拦截。
+
+## 本次更新（v3.1.8-lab）
+
+相对 **v3.1.7-lab**。镜像：`ghcr.io/lij768423-svg/grok2api:v3.1.8-lab`、`ghcr.io/lij768423-svg/grok2api-quality-guard:v3.1.8-lab`（`latest` 已跟上）。
+
+v3.1.7 已经扣假加密（无明文 reasoning）、cipher-only 等 2s、Codex MCP 根 union。18183 上仍漏约 1/7 成功流：vis&lt;8 的 1ms 倒灌、明文思考一票放行、chat 用 `usage.completion` 把思考账单算成正文。
+
+### 1. 假加密/burst 不再要求 `visible >= minOutput`
+
+`reasoning_tokens ≥ 80` **或** 密文达地板，且可见生成窗 `&lt;2s` → 扣。chat 可见 1–7 token、账单 2000+ reasoning 的 1ms 倒完会换号。
+
+### 2. 明文思考不再一票放行
+
+有 reasoning/summary delta，但 `VisibleFlushMS &lt; 2s` 且 `reasoning_tokens / output ≥ 0.8` → 仍扣。慢流真思考（flush ≥2s，或 reasoning 占比不到 80%）照常过。
+
+### 3. 可见字只数流式 content
+
+chat / Responses 只数 `delta.content` / `output_text` / message。不再用 `usage.output − usage.reasoning` 抬可见字——chat 的 completion 经常仍含思考，倒灌会被当成长答案。
 
 ## 一键安装提示词
 
@@ -41,6 +59,10 @@ https://github.com/lij768423-svg/grok2api/blob/main/AI_GROK2API_INSTALL.md
 - 单次 hold 硬上限 30s / 累计 hold 45s / minOutput 8 / 最多 6 次 / fail_closed
 - 短 encrypted_content stub 不算思考；floor = max(256B, reasoning_tokens×4)
 - hold 到期后的短问候 + 高 reasoning（「你好」）继续扣
+- 假加密思考（无明文 reasoning、<2s 整段刷出）扣住；cipher-only 等待可见文本持续流式证据
+- vis&lt;8 / 明文倒灌：flush &lt;2s 且 reasoning/output ≥ 0.8 仍扣
+- 可见字只数流式 content（不用 usage completion − reasoning）
+- Codex MCP 根 anyOf/oneOf schema 转发前改成宽松 object
 - 缺思考冷却 12h，空流 15m；docker compose up -d 带 sidecar
 
 家宽全部用上，每个 sticky 一个 Mihomo listener + 一个 Grok2API 节点。

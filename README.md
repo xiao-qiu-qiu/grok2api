@@ -24,7 +24,25 @@
 > Check out [DEEIX-AI / DEEIX-Chat](https://github.com/DEEIX-AI/DEEIX-Chat), a lightweight, integrated AI platform for model routing, chat, files, tools, billing, identity, and operations.
 
 > [!NOTE]
-> **This fork (lij768423-svg/grok2api) is out of the box.** Official latest plus `qualityGuard` / `requestRetry` ON: 30s hold, minOutput 8, ciphertext floor 256B / reasoning×4, burst (hold-expired short greetings and floor-met dumps still withheld), TUI follow-ups / hosted tools held, 12h missing-thinking cooldown, 15m idle. `docker compose up -d --build` starts the sidecar. Do not pull `ghcr.io/chenyme/grok2api:latest` (same numbers, intercept off). Upstream: [chenyme#1013](https://github.com/chenyme/grok2api/pull/1013) floor, [chenyme#1015](https://github.com/chenyme/grok2api/pull/1015) TUI hold — do not include this fork's `enabled: true`.
+> **This fork (xiao-qiu-qiu/grok2api) combines the current official and lab lines.** `qualityGuard` / `requestRetry` are enabled with the local audit and bounded-latency refinements preserved. The lab feature baseline is **v3.1.8-lab**; `docker compose up -d --build` starts the sidecar. Do not pull `ghcr.io/chenyme/grok2api:latest` when these quality checks are required because the official image keeps interception disabled by default.
+
+## What's new (v3.1.8-lab)
+
+Relative to **v3.1.7-lab**. Images: `ghcr.io/lij768423-svg/grok2api:v3.1.8-lab`, `ghcr.io/lij768423-svg/grok2api-quality-guard:v3.1.8-lab` (`latest` follows).
+
+v3.1.7 already withheld fake-enc dumps with no plaintext reasoning, waited 2s on cipher-only, and simplified Codex MCP root unions. On the 18183 lab it still leaked ~1/7 of successful streams: 1ms flushes with `vis<8`, plaintext thinking as a veto, and chat `usage.completion` inflating visible tokens.
+
+### 1. Fast dump no longer needs `visible >= minOutput`
+
+Withhold when `reasoning_tokens ≥ 80` **or** ciphertext meets the floor, **and** the visible flush window is `&lt;2s`. Chat dumps with 1–7 visible tokens and a 2000+ reasoning bill are rotated.
+
+### 2. Plaintext thinking is not a veto on dumps
+
+If streamed reasoning/summary exists but `VisibleFlushMS &lt; 2s` and `reasoning_tokens / output ≥ 0.8`, still withhold. Slow real thinking (flush ≥2s, or reasoning share below 80%) still delivers.
+
+### 3. Visible tokens from streamed content only
+
+Chat and Responses count `delta.content` / `output_text` / message items. Do not lift visible from `usage.output − usage.reasoning` — chat often reports completion tokens that still include reasoning, which made dumps look like long answers.
 
 ## One-shot install prompt
 
@@ -41,6 +59,10 @@ This fork is out of the box: official latest + missing-thinking intercept ON.
 - hold 30s / minOutput 8 / 6 attempts / fail_closed
 - short encrypted_content stubs are not thinking; floor = max(256B, reasoning_tokens×4)
 - hold-expired short greeting + high reasoning still withheld
+- fake-enc dump (<2s full-answer flush, no plaintext reasoning) withheld; cipher-only waits for sustained visible streaming
+- vis<8 / plaintext-ratio dumps with flush <2s and reasoning/output ≥ 0.8 withheld
+- visible tokens from streamed content only (not usage completion − reasoning)
+- Codex MCP root anyOf/oneOf schemas simplified for Grok Build
 - 12h missing-thinking cooldown, 15m idle; compose up -d starts the sidecar
 
 Use every residential sticky: one Mihomo listener + one Grok2API node per session.
